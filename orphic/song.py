@@ -250,10 +250,19 @@ def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], fl
             if part not in tracks:
                 raise SongError(f"section {name!r} has a part {part!r} that isn't an instrument")
             tr = tracks[part]
+            if isinstance(content, dict) and set(content) == {"notes"}:
+                content = content["notes"]   # {notes: "..."} reads the same as the notation itself
             if tr.spec.get("kit"):
+                if not isinstance(content, dict):
+                    raise SongError(f"{part} is a drum kit: write a 16-step grid per drum, one bar each, like "
+                                    f"{part}: {{kick: \"x.......x.x.....\", snare: \"....x.......x...\", "
+                                    f"hat: \"x.x.x.x.x.x.x.x.\"}} (\"|\" between bars)")
                 tr.hits += parse_drums(content, meter, spb, t, bars)
             elif isinstance(content, dict) and content.get("clip"):
                 tr.events += _clip_events(content, base, meter, spb, t, bars)
+            elif isinstance(content, dict):
+                raise SongError(f"{part} in {name!r}: a part is notation (\"E2/1 G2/1 ...\") or {{clip: name}}, "
+                                f"not {sorted(content)}")
             else:
                 tr.events += parse_melodic(content, meter, spb, t, bars)
         t += bars * meter * spb
@@ -276,7 +285,12 @@ def _plugin_path(name: str) -> str:
 def _set_params(plugin, params: Dict):
     for k, v in (params or {}).items():
         if k not in plugin.parameters:
-            raise SongError(f"the synth has no parameter {k!r}")
+            import difflib
+            has = sorted((x for x in plugin.parameters if k.lower() in x.lower()),
+                         key=lambda x: (not x.startswith(("filter", "osc", "env", "amp")), len(x)))
+            close = has[:4] or difflib.get_close_matches(k, list(plugin.parameters), n=4, cutoff=0.4)
+            raise SongError(f"the synth has no parameter {k!r}" + (f"; close: {', '.join(close)}" if close else "")
+                            + " (studio map lists them all)")
         try:
             setattr(plugin, k, v)
         except Exception:
