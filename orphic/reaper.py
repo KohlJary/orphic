@@ -30,7 +30,7 @@ import yaml
 
 HERE = Path(__file__).resolve().parent
 CFG_TEMPLATE = HERE.parent / "reaper-cfg"
-VST_PATHS = "/home/jaryk/.vst;/home/jaryk/.vst3;/usr/lib/vst3;/usr/lib/vst"
+VST_PATHS = os.environ.get("ORPHIC_VST_PATHS", f"{Path.home()}/.vst;{Path.home()}/.vst3;/usr/lib/vst3;/usr/lib/vst")
 DRUM_NOTES = {"kick": 36, "rim": 37, "snare": 38, "clap": 39, "low_tom": 41, "hat": 42, "mid_tom": 45,
               "open": 46, "high_tom": 48, "cymbal": 49, "cowbell": 56, "maracas": 70, "clave": 75}
 

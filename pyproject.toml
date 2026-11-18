@@ -1,7 +1,7 @@
 [project]
 name = "orphic"
 version = "0.1.0"
-description = "The studio: learn synths by sweeping their knobs (Monochord), and make music with them."
+description = "Cass's studio: songs as text and MIDI, real instruments, a tone lab, Reaper sessions, and her own ears listening back. No music model."
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = ["pedalboard", "mido", "numpy", "scipy", "librosa", "soundfile", "pyworld", "setuptools<80", "cmudict", "pystoi", "piper-tts"]
@@ -15,3 +15,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["orphic"]
+
+[tool.setuptools.package-data]
+orphic = ["jsfx/*"]
