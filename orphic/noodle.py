@@ -46,15 +46,27 @@ def noodle(instrument: Dict, phrase, tempo: float = 100.0, loops: int = 2, meter
         mono = librosa.resample(a.mean(axis=0), orig_sr=SR, target_sr=22050)[: int(22050 * one_bar * bars)]
         f0, voiced, _ = librosa.pyin(mono, fmin=40, fmax=1500, sr=22050, frame_length=2048, hop_length=512)
         t = librosa.times_like(f0, sr=22050, hop_length=512)
-        last = None
+        runs = []   # (midi, start, end): a pitch held over consecutive voiced frames
         for ti, f, v in zip(t, f0, voiced):
             if not v or np.isnan(f):
-                last = None
+                runs.append(None)
                 continue
             m = int(round(librosa.hz_to_midi(f)))
-            if m != last:
-                notes.append(f"{librosa.midi_to_note(m, unicode=False)}@{ti:.2f}s")
-                last = m
+            if runs and runs[-1] and runs[-1][0] == m:
+                runs[-1][2] = ti
+            else:
+                runs.append([m, ti, ti])
+        hop_t = 512 / 22050
+        last = None
+        for r in runs:
+            # a glide between notes passes through pitches for a frame or two: not notes
+            if r is None or r[2] - r[1] + hop_t < 0.06:
+                if r is None:
+                    last = None
+                continue
+            if r[0] != last:
+                notes.append(f"{librosa.midi_to_note(r[0], unicode=False)}@{r[1]:.2f}s")
+            last = r[0]
     return {"audio": str(out_dir / "render.wav"), "length_s": res["length_s"], "sound": heard,
             "sound_raw": sound, "notes_heard": notes[:48],
             "would_have_clipped": res["would_have_clipped"]}
