@@ -40,7 +40,10 @@ with `params` by name, or `patch`, a saved patch from her gun belt), `gm` (a Gen
 MIDI program, played by FluidSynth), `kit:` an acoustic kit (black-pearl, red-zeppelin,
 blonde-bop, blonde-bop-hr, buskmans-holiday; AVL Drumkits, with kick, snare, rim, hat,
 hat_pedal, open, low_tom, mid_tom, high_tom, crash, ride, ride_bell, splash, crash2),
-or `kit: "808"` (a real TR-808, sampled at known
+`kit: "909"` (a TR-909 modelled from its circuits: kick, snare, low/mid/high_tom, rim,
+clap, hat, open, crash, ride; knobs per voice, 0 to 1, like knobs: {kick: {tune: 0.4,
+attack: 0.7, decay: 0.6}, snare: {tone: 0.6, snappy: 0.8}}; its hats and cymbals are an
+approximation, the real ones were samples), or `kit: "808"` (a real TR-808, sampled at known
 settings; `kick: BD2575` and so on choose the samples), or `sfz` (a sampled instrument: fsbs-direct, a
 real electric guitar). `fx` is an effects chain and `rig` a saved one from the gun belt.
 Every instrument has `gain` and `pan`.
@@ -202,7 +205,9 @@ def bar_fill(text: str, beats_per_bar: int) -> List[str]:
 def parse_drums(grid: Dict[str, str], beats_per_bar: int, spb: float, t0: float, bars: int, kit: str = "808"):
     steps = beats_per_bar * 4
     hits = []
-    voices = ACOUSTIC_NOTES if str(kit).lower() in ACOUSTIC_KITS else KIT_DEFAULT
+    from .tr909 import VOICES as V909
+    voices = ACOUSTIC_NOTES if str(kit).lower() in ACOUSTIC_KITS else \
+        {v: 0 for v in V909} if str(kit) == "909" else KIT_DEFAULT
     for voice, text in (grid or {}).items():
         if voice not in voices:
             raise SongError(f"no drum called {voice!r}; the {kit} kit has {', '.join(voices)}")
@@ -440,8 +445,22 @@ def render_kit(tr: Track, total: float) -> np.ndarray:
     kit = str(tr.spec.get("kit")).lower()
     if kit in ACOUSTIC_KITS:
         return render_acoustic(tr, total, AVL_DIR / ACOUSTIC_KITS[kit])
+    if kit == "909":
+        from .tr909 import voice
+        n = int(total * SR)
+        out = np.zeros(n)
+        cache = {}
+        for t, v, vel in tr.hits:
+            if v not in cache:
+                cache[v] = voice(v, (tr.spec.get("knobs") or {}).get(v))
+            y = cache[v] * (vel / 127.0)
+            a = int(round(t * SR))
+            b = min(n, a + len(y))
+            if a < n:
+                out[a:b] += y[: b - a]
+        return np.vstack([out, out])
     if kit != "808":
-        raise SongError(f"no kit {tr.spec.get('kit')!r}; kits: 808, {', '.join(ACOUSTIC_KITS)}")
+        raise SongError(f"no kit {tr.spec.get('kit')!r}; kits: 808, 909, {', '.join(ACOUSTIC_KITS)}")
     choice = dict(KIT_DEFAULT)
     for v, s in (tr.spec.get("samples") or {}).items():
         choice[v] = s if "/" in s else f"{s[:2]}/{s}"
