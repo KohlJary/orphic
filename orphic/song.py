@@ -48,6 +48,9 @@ SR = 44100
 PLUGIN_DIRS = ["/usr/lib/vst3", "/usr/local/lib/vst3", str(Path.home() / ".vst3")]
 SYNTHS = {"vitalium": "vitalium.vst3", "nekobi": "Nekobi.vst3", "surge": "Surge.vst3", "sfizz": "sfizz.vst3",
           "kars": "Kars.vst3"}
+EFFECTS = {"swankyamp": "SwankyAmp.vst3", "zamtube": "ZamTube.vst3"}
+BUILTIN_FX = ("distortion", "compressor", "reverb", "chorus", "delay", "gain", "highpass", "lowpass", "noisegate",
+              "convolution", "phaser", "bitcrush", "ladderfilter")
 SOUNDFONT = "/usr/share/soundfonts/FluidR3_GM.sf2"
 KIT_DIR = Path(os.environ.get("ORPHIC_808", Path.home() / "acousmatic-data" / "808" / "fischer"))
 KIT_DEFAULT = {"kick": "BD/BD2575", "snare": "SD/SD5025", "clap": "CP/CP", "hat": "CH/CH", "open": "OH/OH50",
@@ -297,6 +300,65 @@ def render_kit(tr: Track, total: float) -> np.ndarray:
     return np.vstack([out, out])
 
 
+def resolve_chain(spec: Dict):
+    """An instrument's effects: its own fx, after a rig from the gun belt if it names one."""
+    chain = []
+    if spec.get("rig"):
+        p = BELT / f"{spec['rig']}.json"
+        if not p.exists():
+            raise SongError(f"no rig {spec['rig']!r} on the gun belt")
+        chain += json.loads(p.read_text()).get("chain", [])
+    return chain + list(spec.get("fx") or [])
+
+
+def save_rig(name: str, chain, notes: str = "") -> Path:
+    """A pedalboard on the gun belt: an effects chain under a name she can call (rig: name)."""
+    BELT.mkdir(parents=True, exist_ok=True)
+    p = BELT / f"{name}.json"
+    p.write_text(json.dumps({"name": name, "kind": "rig", "chain": chain, "notes": notes}, indent=1))
+    return p
+
+
+def apply_fx(a: np.ndarray, chain) -> np.ndarray:
+    """An instrument's effects, in order: a VST3 effect by name (swankyamp, zamtube, or a path)
+    with params, or one of pedalboard's built-ins (distortion, compressor, reverb, delay,
+    chorus, gain, highpass, lowpass, noisegate, convolution for a cabinet IR, ...)."""
+    if not chain:
+        return a
+    import pedalboard as pb
+    built = {"distortion": pb.Distortion, "compressor": pb.Compressor, "reverb": pb.Reverb, "chorus": pb.Chorus,
+             "delay": pb.Delay, "gain": pb.Gain, "highpass": pb.HighpassFilter, "lowpass": pb.LowpassFilter,
+             "noisegate": pb.NoiseGate, "convolution": pb.Convolution, "phaser": pb.Phaser, "bitcrush": pb.Bitcrush,
+             "ladderfilter": pb.LadderFilter}
+    out = np.ascontiguousarray(a.astype(np.float32))
+    for fx in chain:
+        fx = dict(fx)
+        if "builtin" in fx:
+            kind = str(fx.pop("builtin")).lower()
+            if kind not in built:
+                raise SongError(f"no built-in effect {kind!r} (one of {', '.join(BUILTIN_FX)})")
+            try:
+                eff = built[kind](**fx)
+            except TypeError as e:
+                raise SongError(f"{kind}: {e}")
+        else:
+            name = str(fx.get("plugin") or "")
+            path = name if os.path.exists(name) else None
+            for d in PLUGIN_DIRS:
+                cand = Path(d) / EFFECTS.get(name.lower(), name)
+                if path is None and cand.exists():
+                    path = str(cand)
+            if not path:
+                raise SongError(f"no effect {name!r} (known: {', '.join(EFFECTS)}, or a built-in)")
+            from pedalboard import load_plugin
+            eff = load_plugin(path)
+            _set_params(eff, fx.get("params"))
+        out = eff(out, SR, reset=True)
+        if out.shape[0] == 1:
+            out = np.vstack([out, out])
+    return out.astype(np.float64)[:2]
+
+
 def _pan(st: np.ndarray, pan: float) -> np.ndarray:
     th = (float(pan) + 1) * np.pi / 4
     return np.vstack([st[0] * np.cos(th) * np.sqrt(2), st[1] * np.sin(th) * np.sqrt(2)])
@@ -322,6 +384,7 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print) -> Dict
             kind = tr.spec.get("patch") or tr.spec.get("synth")
         else:
             raise SongError(f"instrument {name!r} needs synth, patch, gm or kit")
+        a = apply_fx(a, resolve_chain(tr.spec))
         n = mix.shape[1]
         a = a[:, :n] if a.shape[1] >= n else np.pad(a, ((0, 0), (0, n - a.shape[1])))
         a = _pan(a * float(tr.spec.get("gain", 0.8)), tr.spec.get("pan", 0.0))

@@ -162,3 +162,73 @@ def render(r: Dict) -> str:
                 L.append("  on a short C2: " + describe(name, low, eff).split(": ", 1)[-1])
     L += ["", f"## Swept in {r['seconds']} s. Measures", ""] + [f"- {k}: {v}" for k, v in LABELS.items()]
     return "\n".join(L) + "\n"
+
+
+
+# ---------------------------------------------------------------------------
+# Effects: an amp or pedal learned the same way, with a guitar probe going in
+# ---------------------------------------------------------------------------
+
+def map_effect(effect: str, source: Dict, out_dir: Path, steps: int = 7, top: int = 30, log=print) -> Dict:
+    """Sweep each knob of an effect, one at a time from its defaults, with the same guitar
+    probe (tone.py) going in, and say what each does to the tone."""
+    import numpy as np
+    from pedalboard import load_plugin
+    from . import tone as T
+    from .song import EFFECTS, PLUGIN_DIRS
+    path = effect if Path(effect).exists() else next(
+        (str(Path(d) / EFFECTS.get(effect.lower(), effect)) for d in PLUGIN_DIRS
+         if (Path(d) / EFFECTS.get(effect.lower(), effect)).exists()), None)
+    if not path:
+        raise ValueError(f"no effect {effect!r}")
+    t0 = time.time()
+    dry = T.render_probe(source, [])
+    fx = load_plugin(path)
+    params = {k: p for k, p in fx.parameters.items() if not any(w in k.lower() for w in SKIP_WORDS)}
+    defaults = {k: p.raw_value for k, p in params.items()}
+
+    def run(settings):
+        for k, v in defaults.items():
+            params[k].raw_value = v
+        for k, v in settings.items():
+            params[k].raw_value = v
+        a = fx(np.ascontiguousarray(dry.astype(np.float32)), 44100, reset=True)
+        a = np.vstack([a, a]) if a.shape[0] == 1 else a
+        return T.measure_tone(a.astype(np.float64))
+
+    base = run({})
+    moved = {}
+    for name in params:
+        eff = []
+        for v in (0.0, 1.0):
+            if abs(v - defaults[name]) < 1e-6:
+                continue
+            eff += [d for d in T.differences(base, run({name: v})) if not d.startswith("no clear")]
+        if eff:
+            moved[name] = len(eff)
+    ranked = sorted(moved, key=lambda k: -moved[k])[:top]
+    log(f"{Path(path).name}: {len(params)} knobs, {len(moved)} change the tone; sweeping {len(ranked)}")
+    swept = {}
+    for name in ranked:
+        rows = []
+        for v in np.linspace(0, 1, steps):
+            m = run({name: float(v)})
+            params[name].raw_value = float(v)
+            rows.append({"raw": round(float(v), 3), "shown": params[name].string_value, **m})
+        swept[name] = rows
+    lines = [f"# {Path(path).name}: what each knob does to a guitar", "",
+             f"Monochord (orphic) with the tone probe ({', '.join(T.PROBE)}, chugs) from {source}. "
+             f"{len(moved)} of {len(params)} knobs change the tone from the defaults. Each line: lowest setting to "
+             "highest.", "", "## Default", "", ", ".join(T.words(base)), ""]
+    for name, rows in swept.items():
+        a_, b_ = rows[0], rows[-1]
+        ch = [d for d in T.differences(a_, b_) if not d.startswith("no clear")][:4]
+        lines.append(f"- **{name}** [{a_['shown']} … {b_['shown']}]: " + "; ".join(ch))
+        lines.append(f"  at lowest: {', '.join(T.words(a_))}; at highest: {', '.join(T.words(b_))}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    result = {"effect": Path(path).name, "source": source, "knobs": len(params), "changes_tone": len(moved),
+              "base": base, "swept": swept, "seconds": round(time.time() - t0, 1)}
+    (out_dir / "map.json").write_text(json.dumps(result, indent=1, default=float))
+    (out_dir / "map.md").write_text("\n".join(lines) + "\n")
+    log(f"  done in {result['seconds']}s -> {out_dir}")
+    return result

@@ -22,8 +22,43 @@ def main(argv=None):
     n.add_argument("--tempo", type=float, default=100)
     n.add_argument("--loops", type=int, default=2)
     n.add_argument("-o", "--out")
+    t = sub.add_parser("tone", help="put a guitar source and rig through the tone probe, measured")
+    t.add_argument("--instrument", default='{"synth": "kars"}')
+    t.add_argument("--chain", default=None, help="JSON effects chain (else the instrument's fx/rig)")
+    t.add_argument("-o", "--out")
+    t.add_argument("--previous", help="JSON file with an earlier tone, to say what changed")
+    me = sub.add_parser("map-effect", help="map an effect's knobs with a guitar going in")
+    me.add_argument("effect")
+    me.add_argument("--source", default='{"synth": "kars"}')
+    me.add_argument("-o", "--out")
     a = ap.parse_args(argv)
     log = lambda s: print(s, file=sys.stderr, flush=True)
+    if a.cmd == "tone":
+        import json
+        import soundfile as sf
+        from .song import SongError
+        from .tone import tone
+        try:
+            rep, audio = tone(json.loads(a.instrument), json.loads(a.chain) if a.chain else None)
+        except SongError as e:
+            print(json.dumps({"error": str(e)})); sys.exit(2)
+        except Exception as e:
+            print(json.dumps({"error": f"{type(e).__name__}: {e}"})); sys.exit(2)
+        if a.out:
+            Path(a.out).mkdir(parents=True, exist_ok=True)
+            sf.write(Path(a.out) / "render.wav", audio.T, 44100, subtype="PCM_24")
+            rep["audio"] = str(Path(a.out) / "render.wav")
+        if a.previous and Path(a.previous).exists():
+            from .tone import differences
+            rep["since_last_try"] = differences(json.loads(Path(a.previous).read_text()), rep["tone"])
+        print(json.dumps(rep, default=float))
+        return
+    if a.cmd == "map-effect":
+        import json
+        from .monochord import map_effect
+        out = Path(a.out) if a.out else Path("maps") / Path(a.effect).stem
+        map_effect(a.effect, json.loads(a.source), out, log=log)
+        return
     if a.cmd == "noodle":
         import json
         from .noodle import noodle
