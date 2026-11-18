@@ -666,6 +666,7 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print) -> Dict
     (out_dir / "stems").mkdir(exist_ok=True)
     mix = np.zeros((2, int(total * SR)))
     info = {}
+    stems_mono = {}
     for name, tr in tracks.items():
         if tr.spec.get("kit"):
             a = render_kit(tr, total)
@@ -677,6 +678,7 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print) -> Dict
         a = a[:, :n] if a.shape[1] >= n else np.pad(a, ((0, 0), (0, n - a.shape[1])))
         a = _pan(a * float(tr.spec.get("gain", 0.8)), tr.spec.get("pan", 0.0))
         sf.write(out_dir / "stems" / f"{name}.wav", a.T, SR, subtype="PCM_24")
+        stems_mono[name] = a.mean(axis=0)
         mix += a
         mono = a.mean(axis=0)
         sounding = mono[np.abs(mono) > 1e-4]
@@ -693,8 +695,24 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print) -> Dict
     loud = {n: i["loudness_db"] for n, i in info.items() if i.get("loudness_db") is not None}
     top = max(loud.values()) if loud else 0
     balance = [f"{n}: {v - top:+.1f} dB" for n, v in sorted(loud.items(), key=lambda kv: -kv[1])]
+    # the song by section: what plays in each, and how loud each section is against the loudest
+    def _db(x):
+        return float(20 * np.log10(np.sqrt(np.mean(x ** 2)) + 1e-12)) if len(x) else -120.0
+    spb_ = 60.0 / float(song["tempo"])
+    bar_s = int(song.get("meter", 4)) * spb_
+    table = []
+    for i, (sec, t0) in enumerate(marks):
+        t1 = marks[i + 1][1] if i + 1 < len(marks) else length
+        a0, a1 = int(t0 * SR), int(t1 * SR)
+        plays = [n for n, m in stems_mono.items() if _db(m[a0:a1]) > -60]
+        table.append({"section": sec, "bars": int(round((t1 - t0) / bar_s)), "plays": plays,
+                      "loudness_db": round(_db(mix.mean(axis=0)[a0:a1]), 1)})
+    if table:
+        top_s = max(r["loudness_db"] for r in table)
+        for r in table:
+            r["vs_loudest_db"] = round(r["loudness_db"] - top_s, 1)
     result = {"title": song.get("title", Path(song_path).stem), "tempo": song["tempo"], "length_s": round(length, 2),
-              "balance": balance,
+              "balance": balance, "by_section": table,
               "sections": marks, "tracks": info, "mix_peak_before_normalising_db": round(float(20 * np.log10(peak + 1e-12)), 1),
               "would_have_clipped": clipped}
     (out_dir / "render.json").write_text(json.dumps(result, indent=1))
