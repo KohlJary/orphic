@@ -120,8 +120,18 @@ class Track:
     hits: List[Tuple[float, str, int]] = field(default_factory=list)   # drums: (time, voice, velocity)
 
 
+def split_bars(text: str) -> List[str]:
+    """Bars of a part; a "|" at the very end (or start) doesn't make an empty bar."""
+    bars = [b.strip() for b in str(text).split("|")]
+    while len(bars) > 1 and not bars[-1]:
+        bars.pop()
+    while len(bars) > 1 and not bars[0]:
+        bars.pop(0)
+    return bars
+
+
 def parse_melodic(text: str, beats_per_bar: int, spb: float, t0: float, bars: int) -> List[Event]:
-    bar_texts = [b.strip() for b in str(text).split("|")]
+    bar_texts = split_bars(text)
     out: List[Event] = []
     for bi in range(bars):
         bt = bar_texts[bi % len(bar_texts)]
@@ -158,7 +168,7 @@ def parse_melodic(text: str, beats_per_bar: int, spb: float, t0: float, bars: in
 def bar_fill(text: str, beats_per_bar: int) -> List[str]:
     """What each written bar holds, and any bar that leaves beats silent."""
     out = []
-    for bi, bt in enumerate(b.strip() for b in str(text).split("|")):
+    for bi, bt in enumerate(split_bars(text)):
         beats, toks = 0.0, []
         for tok in re.findall(r"\[[^\]]*\]/\S+|\S+", bt):
             what, _, length = tok.replace("pm", "").rstrip("^").rpartition("/")

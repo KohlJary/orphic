@@ -24,8 +24,9 @@ from .song import SR, render
 
 def noodle(instrument: Dict, phrase, tempo: float = 100.0, loops: int = 2, meter: int = 4,
            out_dir: Optional[Path] = None) -> Dict:
-    bars = len(str(phrase).split("|")) if not isinstance(phrase, dict) else \
-        max(len(str(v).split("|")) for v in phrase.values())
+    from .song import split_bars
+    bars = len(split_bars(phrase)) if not isinstance(phrase, dict) else \
+        max(len(split_bars(v)) for v in phrase.values())
     song = {"title": "noodle", "tempo": tempo, "meter": meter, "instruments": {"riff": instrument},
             "sections": {"riff": {"bars": bars * max(1, int(loops)), "riff": phrase}}, "arrangement": ["riff"]}
     out_dir = Path(out_dir or tempfile.mkdtemp(prefix="noodle-"))
@@ -73,8 +74,12 @@ def noodle(instrument: Dict, phrase, tempo: float = 100.0, loops: int = 2, meter
             last = r[0]
     from .song import bar_fill
     played = bar_fill(phrase, meter) if not isinstance(phrase, dict) else None
+    short = [p.split(":")[0] for p in (played or []) if "silent" in p]
+    timing = (f"{', '.join(short)} {'doesn' if len(short) == 1 else 'don'}'t fill {meter} beats, so "
+              f"{'it ends' if len(short) == 1 else 'they end'} in silence: in each bar the lengths after / "
+              f"should add up to {meter}" if short else f"every bar fills its {meter} beats")
     return {"audio": str(out_dir / "render.wav"), "length_s": res["length_s"], "sound": heard,
-            "sound_raw": sound, "played": played, "notes_heard": notes[:48],
+            "sound_raw": sound, "timing": timing if played else None, "played": played, "notes_heard": notes[:48],
             "notes_heard_is": ("a pitch tracker's guess at the audio, for checking by ear; it misses or misreads "
                                "short, palm-muted and distorted notes. 'played' is what was actually played."),
             "would_have_clipped": res["would_have_clipped"]}
