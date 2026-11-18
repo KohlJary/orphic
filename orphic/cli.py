@@ -31,8 +31,69 @@ def main(argv=None):
     me.add_argument("effect")
     me.add_argument("--source", default='{"synth": "kars"}')
     me.add_argument("-o", "--out")
+    c = sub.add_parser("clip", help="write, read or import a MIDI clip in a project's clips/ folder")
+    c.add_argument("op", choices=["write", "read", "list", "import"])
+    c.add_argument("name", nargs="?")
+    c.add_argument("--dir", required=True, help="the project folder (clips live in DIR/clips)")
+    c.add_argument("--riff", help="song notation")
+    c.add_argument("--notes", help="JSON list of notes: bar, beat, pitch, len, vel, pm")
+    c.add_argument("--meter", type=int, default=4)
+    c.add_argument("--bars", help="read: a bar or range, like 3 or 1-4")
+    c.add_argument("--file", help="import: a .mid file")
+    c.add_argument("--track", help="import: one named track of it")
     a = ap.parse_args(argv)
     log = lambda s: print(s, file=sys.stderr, flush=True)
+    if a.cmd == "clip":
+        import json
+        import re as _re
+        from . import clip as C
+        folder = Path(a.dir) / "clips"
+        try:
+            if a.op == "list":
+                out = []
+                for p in sorted(folder.glob("*.mid")):
+                    n = C.load(p)
+                    out.append({"clip": p.stem, "bars": C.bars_of(n, a.meter), "notes": len(n)})
+                print(json.dumps({"clips": out})); return
+            name = _re.sub(r"[^a-z0-9_-]+", "-", (a.name or "").lower()).strip("-")
+            if not name:
+                raise C.ClipError("a clip needs a name")
+            path = folder / f"{name}.mid"
+            if a.op == "write":
+                if a.riff:
+                    notes = C.from_notation(a.riff, a.meter)
+                elif a.notes:
+                    notes = C.from_notes(json.loads(a.notes), a.meter)
+                else:
+                    raise C.ClipError("write needs a riff (notation) or notes")
+                if not notes:
+                    raise C.ClipError("that clip has no notes")
+                C.save(notes, path, a.meter)
+            elif a.op == "import":
+                if not a.file:
+                    raise C.ClipError("import needs a .mid file")
+                notes = C.load(Path(a.file), a.track)
+                if not notes:
+                    raise C.ClipError("no notes in that file" + (f" on track {a.track!r}" if a.track else ""))
+                C.save(notes, path, a.meter)
+            elif not path.exists():
+                raise C.ClipError(f"no clip {name!r}")
+            notes = C.load(path)
+            nb = C.bars_of(notes, a.meter)
+            first, last = 1, nb
+            if a.bars:
+                m = _re.match(r"^(\d+)(?:-(\d+))?$", a.bars.strip())
+                if m:
+                    first = int(m.group(1)); last = int(m.group(2) or m.group(1))
+            if a.op != "read":
+                first, last = 1, min(nb, 4)
+            print(json.dumps({"clip": name, "file": str(path), "bars": nb, "notes": len(notes),
+                              "roll": C.roll(notes, a.meter, first, last),
+                              "as_notation": C.to_notation(notes, a.meter),
+                              "use_it": f"in a song section: <instrument>: {{clip: {name}}}"}))
+        except (C.ClipError, ValueError) as e:
+            print(json.dumps({"error": str(e)})); sys.exit(2)
+        return
     if a.cmd == "tone":
         import json
         import soundfile as sf

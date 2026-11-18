@@ -32,6 +32,9 @@ Chords: a name (Em/4, G/2) or the notes in brackets. A power chord is root, fift
 octave: [E2 B2 E3]/1. Palm-mute with pm after the length ([E2 B2]/0.25pm), accent with ^.
 A chugging bar: "[E2 B2]/0.25pm [E2 B2]/0.25pm [E2 B2]/0.5pm [G2 D3]/1 [A2 E3]/2".
 
+A part can also be a MIDI clip from the project's clips/ folder, looped to fill the section:
+`guitar: {clip: chug}` plays clips/chug.mid (palm-muted notes are on MIDI channel 2).
+
 Instruments: `synth` (a VST3 synth by name or path: vitalium, nekobi, surge, ...,
 with `params` by name, or `patch`, a saved patch from her gun belt), `gm` (a General
 MIDI program, played by FluidSynth), or `kit: "808"` (a real TR-808, sampled at known
@@ -202,7 +205,27 @@ def parse_drums(grid: Dict[str, str], beats_per_bar: int, spb: float, t0: float,
     return hits
 
 
-def parse(song: Dict) -> Tuple[Dict[str, Track], float, List[Tuple[str, float]]]:
+def _clip_events(content, base: Optional[Path], meter: int, spb: float, t0: float, bars: int) -> List[Event]:
+    """A part given as a clip ({clip: name}, from the song's clips/ folder), looped over the section."""
+    from .clip import bars_of, load
+    name = str(content["clip"])
+    p = (base or Path(".")) / "clips" / (name if name.endswith(".mid") else f"{name}.mid")
+    if not p.exists():
+        raise SongError(f"no clip {name!r} (looked for {p.name} in clips/)")
+    notes = load(p)
+    span = bars_of(notes, meter) * meter
+    out = []
+    loop = 0
+    while loop * span < bars * meter - 1e-9:
+        for n in notes:
+            at = loop * span + n.start
+            if at < bars * meter - 1e-9:
+                out.append(Event(t0 + at * spb, min(n.length, bars * meter - at) * spb * 0.98, n.midi, n.vel, n.pm))
+        loop += 1
+    return out
+
+
+def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], float, List[Tuple[str, float]]]:
     try:
         tempo = float(song["tempo"])
     except (KeyError, TypeError, ValueError):
@@ -229,6 +252,8 @@ def parse(song: Dict) -> Tuple[Dict[str, Track], float, List[Tuple[str, float]]]
             tr = tracks[part]
             if tr.spec.get("kit"):
                 tr.hits += parse_drums(content, meter, spb, t, bars)
+            elif isinstance(content, dict) and content.get("clip"):
+                tr.events += _clip_events(content, base, meter, spb, t, bars)
             else:
                 tr.events += parse_melodic(content, meter, spb, t, bars)
         t += bars * meter * spb
@@ -496,7 +521,7 @@ def _pan(st: np.ndarray, pan: float) -> np.ndarray:
 
 def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print) -> Dict:
     song = yaml.safe_load(Path(song_path).read_text())
-    tracks, length, marks = parse(song)
+    tracks, length, marks = parse(song, Path(song_path).parent)
     total = length + tail
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "stems").mkdir(exist_ok=True)
