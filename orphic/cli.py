@@ -85,7 +85,9 @@ def main(argv=None):
                 raise C.ClipError("a clip needs a name")
             path = folder / f"{name}.mid"
             if a.op == "write":
-                if a.riff:
+                if a.riff and a.riff.strip().startswith("{"):
+                    notes = C.from_grid(json.loads(a.riff), a.meter)   # a drum grid
+                elif a.riff:
                     notes = C.from_notation(a.riff, a.meter)
                 elif a.notes:
                     notes = C.from_notes(json.loads(a.notes), a.meter)

@@ -93,6 +93,13 @@ ACOUSTIC_KITS = {"black-pearl": "Black_Pearl_4_LV2.sf2", "red-zeppelin": "Red_Ze
 ACOUSTIC_NOTES = {"kick": 36, "rim": 37, "snare": 38, "low_tom": 41, "hat": 42, "hat_pedal": 44, "mid_tom": 45,
                   "open": 46, "high_tom": 48, "crash": 49, "cymbal": 49, "ride": 51, "ride_bell": 53, "splash": 55,
                   "crash2": 57}
+DRUM_NOTES = {"kick": 36, "rim": 37, "snare": 38, "clap": 39, "low_tom": 41, "hat": 42, "hat_pedal": 44,
+              "mid_tom": 45, "open": 46, "high_tom": 48, "crash": 49, "cymbal": 49, "ride": 51, "ride_bell": 53,
+              "splash": 55, "cowbell": 56, "crash2": 57, "maracas": 70, "clave": 75}
+NOTE_DRUM = {}
+for _v, _n in DRUM_NOTES.items():
+    NOTE_DRUM.setdefault(_n, _v)
+MISSING_CLIPS: List[str] = []   # clips a song names that aren't written yet (they play as silence)
 BELT = Path(os.environ.get("ORPHIC_BELT", Path.home() / "orphic" / "belt"))
 
 NOTE = re.compile(r"^([A-Ga-g])([#b]?)(-?\d)$")
@@ -230,7 +237,9 @@ def _clip_events(content, base: Optional[Path], meter: int, spb: float, t0: floa
     name = str(content["clip"])
     p = (base or Path(".")) / "clips" / (name if name.endswith(".mid") else f"{name}.mid")
     if not p.exists():
-        raise SongError(f"no clip {name!r} (looked for {p.name} in clips/)")
+        if name not in MISSING_CLIPS:
+            MISSING_CLIPS.append(name)
+        return []   # not written yet: silence in this section, and the render says so
     notes = load(p)
     span = bars_of(notes, meter) * meter
     out = []
@@ -245,6 +254,7 @@ def _clip_events(content, base: Optional[Path], meter: int, spb: float, t0: floa
 
 
 def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], float, List[Tuple[str, float]]]:
+    MISSING_CLIPS.clear()
     try:
         tempo = float(song["tempo"])
     except (KeyError, TypeError, ValueError):
@@ -280,7 +290,13 @@ def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], fl
             tr = tracks[part]
             if isinstance(content, dict) and set(content) == {"notes"}:
                 content = content["notes"]   # {notes: "..."} reads the same as the notation itself
-            if tr.spec.get("kit"):
+            if tr.spec.get("kit") and isinstance(content, dict) and content.get("clip"):
+                # a drum clip: its notes are General MIDI drum notes
+                for e in _clip_events(content, base, meter, spb, t, bars):
+                    v = NOTE_DRUM.get(e.midi)
+                    if v:
+                        tr.hits.append((e.start, v, e.vel))
+            elif tr.spec.get("kit"):
                 if not isinstance(content, dict):
                     raise SongError(f"{part} is a drum kit: write a 16-step grid per drum, one bar each, like "
                                     f"{part}: {{kick: \"x.......x.x.....\", snare: \"....x.......x...\", "
@@ -713,6 +729,7 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print) -> Dict
             r["vs_loudest_db"] = round(r["loudness_db"] - top_s, 1)
     result = {"title": song.get("title", Path(song_path).stem), "tempo": song["tempo"], "length_s": round(length, 2),
               "balance": balance, "by_section": table,
+              **({"clips_not_written_yet": list(MISSING_CLIPS)} if MISSING_CLIPS else {}),
               "sections": marks, "tracks": info, "mix_peak_before_normalising_db": round(float(20 * np.log10(peak + 1e-12)), 1),
               "would_have_clipped": clipped}
     (out_dir / "render.json").write_text(json.dumps(result, indent=1))

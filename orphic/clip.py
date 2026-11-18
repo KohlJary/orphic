@@ -51,6 +51,23 @@ def from_notation(text: str, meter: int = 4) -> List[Note]:
     return [Note(e.start, round(e.dur / 0.98, 6), e.midi, e.vel, e.pm) for e in ev]
 
 
+def from_grid(grid: Dict[str, str], meter: int = 4) -> List[Note]:
+    """A drum clip from a grid ({kick: "x...x...", snare: "....x..."}, 16 steps a bar, | between
+    bars, X accented): each hit a sixteenth-long note on its General MIDI drum note."""
+    from .song import DRUM_NOTES
+    out = []
+    for voice, text in (grid or {}).items():
+        if voice not in DRUM_NOTES:
+            raise ClipError(f"no drum called {voice!r}; drums: {', '.join(DRUM_NOTES)}")
+        for bi, bt in enumerate(b.replace(" ", "") for b in str(text).split("|") if b.strip()):
+            if len(bt) != meter * 4:
+                raise ClipError(f"{voice} bar {bi + 1} has {len(bt)} steps; a bar has {meter * 4}")
+            for k, c in enumerate(bt):
+                if c in "xX":
+                    out.append(Note(bi * meter + k / 4, 0.25, DRUM_NOTES[voice], 120 if c == "X" else 96))
+    return sorted(out, key=lambda n: (n.start, n.midi))
+
+
 def from_notes(rows: List[Dict], meter: int = 4) -> List[Note]:
     from .song import note_midi, SongError
     out = []
