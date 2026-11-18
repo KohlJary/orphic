@@ -52,6 +52,11 @@ EFFECTS = {"swankyamp": "SwankyAmp.vst3", "zamtube": "ZamTube.vst3"}
 BUILTIN_FX = ("distortion", "compressor", "reverb", "chorus", "delay", "gain", "highpass", "lowpass", "noisegate",
               "convolution", "phaser", "bitcrush", "ladderfilter")
 SOUNDFONT = "/usr/share/soundfonts/FluidR3_GM.sf2"
+SFZ_DIR = Path(os.environ.get("ORPHIC_SFZ_DIR", Path.home() / "acousmatic-data" / "guitar"))
+# sampled instruments: name -> folder under SFZ_DIR holding one .sfz (with its license)
+SFZ_LIBS = {"fsbs-direct": "freepats-direct"}   # Freepats FSBS electric guitar, direct (CC0): run it into an amp
+PM_SECONDS = 0.11      # a palm-muted note is damped this quickly
+PM_LOWPASS_HZ = 1100.0
 KIT_DIR = Path(os.environ.get("ORPHIC_808", Path.home() / "acousmatic-data" / "808" / "fischer"))
 KIT_DEFAULT = {"kick": "BD/BD2575", "snare": "SD/SD5025", "clap": "CP/CP", "hat": "CH/CH", "open": "OH/OH50",
                "rim": "RS/RS", "cowbell": "CB/CB", "low_tom": "LT/LT50", "mid_tom": "MT/MT50", "high_tom": "HT/HT50",
@@ -91,6 +96,7 @@ class Event:
     dur: float
     midi: int
     vel: int = 96
+    pm: bool = False   # palm-muted
 
 
 @dataclass
@@ -108,6 +114,8 @@ def parse_melodic(text: str, beats_per_bar: int, spb: float, t0: float, bars: in
         bt = bar_texts[bi % len(bar_texts)]
         beat = 0.0
         for tok in re.findall(r"\[[^\]]*\]/\S+|\S+", bt):
+            pm = tok.endswith("pm") or tok.endswith("pm^")
+            tok = tok.replace("pm", "") if pm else tok
             accent = tok.endswith("^")
             tok = tok.rstrip("^")
             if "/" not in tok:
@@ -127,7 +135,7 @@ def parse_melodic(text: str, beats_per_bar: int, spb: float, t0: float, bars: in
                 else:
                     mids = chord_midis(what)
                 for mm in mids:
-                    out.append(Event(start, L * spb * 0.98, mm, 120 if accent else 96))
+                    out.append(Event(start, L * spb * 0.98, mm, 120 if accent else 96, pm))
             beat += L
         if beat > beats_per_bar + 1e-6:
             raise SongError(f"bar {bi + 1} '{bt}' has {beat:g} beats, more than {beats_per_bar}")
@@ -238,6 +246,48 @@ def render_synth(tr: Track, total: float) -> np.ndarray:
     return np.vstack([a, a]) if a.shape[0] == 1 else a[:2]
 
 
+def _midi_file(events, path: Path, program: Optional[int] = None):
+    import mido
+    mid = mido.MidiFile(ticks_per_beat=960)
+    trk = mido.MidiTrack()
+    mid.tracks.append(trk)
+    trk.append(mido.MetaMessage("set_tempo", tempo=500000, time=0))   # 120 bpm: seconds * 1920 ticks
+    if program is not None:
+        trk.append(mido.Message("program_change", program=max(0, min(127, program - 1)), time=0))
+    evs = []
+    for e in events:
+        evs.append((e.start, 1, mido.Message("note_on", note=e.midi, velocity=e.vel)))
+        evs.append((e.start + e.dur, 0, mido.Message("note_off", note=e.midi, velocity=0)))
+    evs.sort(key=lambda x: (x[0], x[1]))
+    last = 0
+    for t, _, msg in evs:
+        tick = int(round(t * 1920))
+        msg.time = tick - last
+        last = tick
+        trk.append(msg)
+    mid.save(path)
+
+
+def _fit(a: np.ndarray, total: float) -> np.ndarray:
+    n = int(total * SR)
+    return a[:, :n] if a.shape[1] >= n else np.pad(a, ((0, 0), (0, n - a.shape[1])))
+
+
+def render_sfz(tr: Track, total: float) -> np.ndarray:
+    name = str(tr.spec["sfz"])
+    folder = SFZ_DIR / SFZ_LIBS.get(name, name)
+    sfz = next(folder.rglob("*.sfz"), None) if folder.exists() else None
+    if sfz is None:
+        raise SongError(f"no sampled instrument {name!r} (known: {', '.join(SFZ_LIBS)})")
+    with tempfile.TemporaryDirectory() as d:
+        mp, wp = Path(d) / "t.mid", Path(d) / "t.wav"
+        _midi_file(tr.events, mp)
+        subprocess.run(["sfizz_render", "--sfz", str(sfz), "--midi", str(mp), "--wav", str(wp), "-s", str(SR)],
+                       check=True, capture_output=True, timeout=600)
+        a, _ = sf.read(wp, always_2d=True)
+    return _fit(a.T.astype(np.float64), total)
+
+
 def render_gm(tr: Track, total: float) -> np.ndarray:
     import mido
     prog = int(tr.spec["gm"])
@@ -319,6 +369,35 @@ def save_rig(name: str, chain, notes: str = "") -> Path:
     return p
 
 
+def render_source(tr: Track, total: float):
+    """A melodic instrument's audio, palm mutes included: palm-muted notes are played in a
+    pass of their own, cut short and damped (fast decay, highs rolled off), then joined."""
+    def one(t: Track):
+        if "gm" in t.spec:
+            return render_gm(t, total), f"General MIDI {t.spec['gm']}"
+        if t.spec.get("sfz"):
+            return render_sfz(t, total), f"sampled {t.spec['sfz']}"
+        if t.spec.get("synth") or t.spec.get("patch"):
+            return render_synth(t, total), t.spec.get("patch") or t.spec.get("synth")
+        raise SongError(f"instrument {t.name!r} needs synth, patch, gm, sfz or kit")
+    open_ev = [e for e in tr.events if not e.pm]
+    pm_ev = [Event(e.start, min(e.dur, PM_SECONDS), e.midi, e.vel, True) for e in tr.events if e.pm]
+    if not pm_ev:
+        return one(tr)
+    a, kind = one(Track(tr.name, tr.spec, events=open_ev)) if open_ev else (np.zeros((2, int(total * SR))), None)
+    b, kind2 = one(Track(tr.name, tr.spec, events=pm_ev))
+    from scipy.signal import butter, sosfilt
+    b = sosfilt(butter(2, PM_LOWPASS_HZ / (SR / 2), output="sos"), b, axis=1)
+    # the damping: each palm-muted note dies away over about PM_SECONDS
+    env = np.ones(b.shape[1])
+    for e in pm_ev:
+        i, j = int(e.start * SR), min(b.shape[1], int((e.start + 0.35) * SR))
+        t = np.arange(j - i) / SR
+        env[i:j] = np.minimum(env[i:j], np.exp(-t / (PM_SECONDS / 2.5)) * 0.9 + 0.1 * (t < 0.01))
+    b = b * env
+    return _fit(a, total) + _fit(b, total), (kind or kind2) + " (with palm mutes)"
+
+
 def apply_fx(a: np.ndarray, chain) -> np.ndarray:
     """An instrument's effects, in order: a VST3 effect by name (swankyamp, zamtube, or a path)
     with params, or one of pedalboard's built-ins (distortion, compressor, reverb, delay,
@@ -376,14 +455,8 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print) -> Dict
         if tr.spec.get("kit"):
             a = render_kit(tr, total)
             kind = "808 kit"
-        elif "gm" in tr.spec:
-            a = render_gm(tr, total)
-            kind = f"General MIDI {tr.spec['gm']}"
-        elif tr.spec.get("synth") or tr.spec.get("patch"):
-            a = render_synth(tr, total)
-            kind = tr.spec.get("patch") or tr.spec.get("synth")
         else:
-            raise SongError(f"instrument {name!r} needs synth, patch, gm or kit")
+            a, kind = render_source(tr, total)
         a = apply_fx(a, resolve_chain(tr.spec))
         n = mix.shape[1]
         a = a[:, :n] if a.shape[1] >= n else np.pad(a, ((0, 0), (0, n - a.shape[1])))

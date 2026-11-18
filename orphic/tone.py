@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from .song import SR, Event, Track, apply_fx, render_gm, render_synth, resolve_chain
+from .song import SR, Event, Track, apply_fx, render_source, resolve_chain
 
 TEMPO = 140.0
 PROBE = {
@@ -40,17 +40,14 @@ def probe_events() -> List[Event]:
     step = 60.0 / TEMPO / 4
     t = a
     while t < b - step / 2:
-        ev.append(Event(t, step * 0.6, n, 110))
+        ev.append(Event(t, step * 0.6, n, 110, pm=True))   # chugs are palm-muted
         t += step
     return ev
 
 
 def render_probe(instrument: Dict, chain=None) -> np.ndarray:
     tr = Track("guitar", dict(instrument), events=probe_events())
-    if "gm" in instrument:
-        a = render_gm(tr, TOTAL)
-    else:
-        a = render_synth(tr, TOTAL)
+    a, _ = render_source(tr, TOTAL)
     return apply_fx(a, chain if chain is not None else resolve_chain(instrument))
 
 
