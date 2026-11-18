@@ -36,7 +36,8 @@ def piper(text: str, model: str) -> tuple:
     return y, sr
 
 
-def sing(text: str, notes: Sequence[Note], model: str, vibrato: float = 0.006, formant_shift: float = 1.0):
+def sing(text: str, notes: Sequence[Note], model: str, vibrato: float = 0.006, formant_shift: float = 1.0,
+         speech_shift: float = 0.0):
     notes = list(notes)
     total = int((max(n.start + n.dur for n in notes) + 0.5) * 1000 / FP)
     F0 = np.zeros(total)
@@ -73,6 +74,10 @@ def sing(text: str, notes: Sequence[Note], model: str, vibrato: float = 0.006, f
             ok = dst < total
             dst, src_idx = dst[ok], src_idx[ok]
             SP[dst], AP[dst] = sp[src_idx], ap[src_idx]
+            if nt.midi is None or nt.midi < 0:
+                # rapped (spoken) syllable: keep the voice's own intonation, moved by `speech_shift` semitones
+                F0[dst] = f0[src_idx] * 2 ** (speech_shift / 12)
+                continue
             hz = 440.0 * 2 ** ((nt.midi - 69) / 12)
             ramp = np.clip((np.arange(len(dst)) - 40) / 40, 0, 1)
             vib = 1 + vibrato * ramp * np.sin(2 * np.pi * 5.5 * np.arange(len(dst)) * FP / 1000)
