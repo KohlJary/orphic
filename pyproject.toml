@@ -1,0 +1,17 @@
+[project]
+name = "orphic"
+version = "0.1.0"
+description = "The studio: learn synths by sweeping their knobs (Monochord), and make music with them."
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["pedalboard", "mido", "numpy", "scipy", "librosa", "soundfile"]
+
+[project.scripts]
+orphic = "orphic.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["orphic"]
