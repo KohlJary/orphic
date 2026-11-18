@@ -16,8 +16,27 @@ def main(argv=None):
     r.add_argument("song")
     r.add_argument("-o", "--out")
     r.add_argument("--listen", action="store_true", help="listen back to the render with Acousmatic")
+    n = sub.add_parser("noodle", help="play a riff quickly and hear it back")
+    n.add_argument("--instrument", required=True, help='JSON, e.g. {"synth": "nekobi", "params": {"cutoff": 40}}')
+    n.add_argument("--phrase", required=True, help='bars in song notation, or JSON drum grid for a kit')
+    n.add_argument("--tempo", type=float, default=100)
+    n.add_argument("--loops", type=int, default=2)
+    n.add_argument("-o", "--out")
     a = ap.parse_args(argv)
     log = lambda s: print(s, file=sys.stderr, flush=True)
+    if a.cmd == "noodle":
+        import json
+        from .noodle import noodle
+        from .song import SongError
+        try:
+            phrase = json.loads(a.phrase) if a.phrase.strip().startswith("{") else a.phrase
+            res = noodle(json.loads(a.instrument), phrase, a.tempo, a.loops, out_dir=Path(a.out) if a.out else None)
+        except SongError as e:
+            print(json.dumps({"error": str(e)})); sys.exit(2)
+        except Exception as e:
+            print(json.dumps({"error": f"{type(e).__name__}: {e}"})); sys.exit(2)
+        print(json.dumps(res, default=float))
+        return
     if a.cmd == "monochord":
         from .monochord import map_synth
         out = Path(a.out) if a.out else Path("maps") / Path(a.plugin).stem
