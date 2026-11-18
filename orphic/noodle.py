@@ -37,10 +37,14 @@ def noodle(instrument: Dict, phrase, tempo: float = 100.0, loops: int = 2, meter
     one_bar = meter * 60.0 / tempo
     sound = measure(a, hold=min(res["length_s"], one_bar * bars))
     if not instrument.get("kit"):
-        # a riff has many notes: measures of one pitch (pitch, wobble, harmonic share) don't apply
-        for k in ("f0_hz", "pitch_wobble_cents", "harmonicity", "odd_even"):
-            sound[k] = None
-    heard = {LABELS[k].split(" (")[0]: v for k, v in sound.items() if v is not None}
+        # a riff has many notes and gaps between them: measures of one held note (pitch,
+        # attack, sustain, release, tremolo...) don't apply, and spectral ones taken over the
+        # whole loop measured the silence (Cass, 2026-11-18: "brightness at 3.6 Hz is
+        # subsonic"). Brightness, noise, width and the peak come from the sounding parts only.
+        sound.update(_riff_sound(a[:, : int(SR * one_bar * bars)]))
+    names = {**LABELS, "sounding_share": "share of the loop that sounds", "rings_ms": "notes ring for (ms, median)"}
+    heard = {names[k].split(" (")[0] if k not in ("sounding_share", "rings_ms") else names[k]: v
+             for k, v in sound.items() if v is not None}
     notes = []
     if not instrument.get("kit"):
         mono = librosa.resample(a.mean(axis=0), orig_sr=SR, target_sr=22050)[: int(22050 * one_bar * bars)]
@@ -74,6 +78,40 @@ def noodle(instrument: Dict, phrase, tempo: float = 100.0, loops: int = 2, meter
             "notes_heard_is": ("a pitch tracker's guess at the audio, for checking by ear; it misses or misreads "
                                "short, palm-muted and distorted notes. 'played' is what was actually played."),
             "would_have_clipped": res["would_have_clipped"]}
+
+
+def _riff_sound(a: np.ndarray) -> Dict:
+    y = a.mean(axis=0)
+    hop = 512
+    rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=hop)[0]
+    out = {k: None for k in ("f0_hz", "pitch_wobble_cents", "harmonicity", "odd_even", "attack_ms", "sustain",
+                             "release_ms", "brightness_motion", "am_rate_hz", "am_depth", "noise", "peak_db")}
+    if rms.max() < 1e-5:
+        return out
+    on = rms > rms.max() * 10 ** (-35 / 20)       # sounding: within 35 dB of the loudest moment
+    out["sounding_share"] = round(float(on.mean()), 3)
+    runs, n = [], 0
+    for v in list(on) + [False]:
+        if v:
+            n += 1
+        elif n:
+            runs.append(n * hop / SR * 1000)
+            n = 0
+    out["rings_ms"] = round(float(np.median(runs)), 1) if runs else None
+    S = np.abs(librosa.stft(y, n_fft=2048, hop_length=hop))[:, : len(on)]
+    Sa = S[:, on[: S.shape[1]]]
+    if Sa.shape[1]:
+        out["brightness_hz"] = round(float(np.median(librosa.feature.spectral_centroid(S=Sa, sr=SR)[0])), 1)
+        f = librosa.fft_frequencies(sr=SR, n_fft=2048)
+        spec = Sa.mean(axis=1)
+        sel = f > 60
+        i = int(np.argmax(spec[sel]))
+        out["peak_hz"] = round(float(f[sel][i]), 1)
+        # (no peak height or noise share for a riff: a rig's low-pass and a chord's many
+        # partials make both read as extremes that mean nothing)
+    m, s_ = (a[0] + a[1]) / 2, (a[0] - a[1]) / 2
+    out["width"] = round(float((s_ ** 2).sum() / ((m ** 2).sum() + (s_ ** 2).sum() + 1e-20)), 3)
+    return out
 
 
 def differences(before: Dict, after: Dict) -> list:
