@@ -314,6 +314,13 @@ def render_synth(tr: Track, total: float) -> np.ndarray:
     return np.vstack([a, a]) if a.shape[0] == 1 else a[:2]
 
 
+def tool(name: str) -> str:
+    """A system program, found even when the caller's PATH is thin (a systemd service)."""
+    import shutil
+    return shutil.which(name) or next((f"{d}/{name}" for d in ("/usr/bin", "/usr/local/bin", "/bin")
+                                       if os.path.exists(f"{d}/{name}")), name)
+
+
 def _midi_file(events, path: Path, program: Optional[int] = None):
     import mido
     mid = mido.MidiFile(ticks_per_beat=960)
@@ -350,7 +357,7 @@ def render_sfz(tr: Track, total: float) -> np.ndarray:
     with tempfile.TemporaryDirectory() as d:
         mp, wp = Path(d) / "t.mid", Path(d) / "t.wav"
         _midi_file(tr.events, mp)
-        subprocess.run(["sfizz_render", "--sfz", str(sfz), "--midi", str(mp), "--wav", str(wp), "-s", str(SR)],
+        subprocess.run([tool("sfizz_render"), "--sfz", str(sfz), "--midi", str(mp), "--wav", str(wp), "-s", str(SR)],
                        check=True, capture_output=True, timeout=600)
         a, _ = sf.read(wp, always_2d=True)
     return _fit(a.T.astype(np.float64), total)
@@ -379,7 +386,7 @@ def render_gm(tr: Track, total: float) -> np.ndarray:
     with tempfile.TemporaryDirectory() as d:
         mp, wp = Path(d) / "t.mid", Path(d) / "t.wav"
         mid.save(mp)
-        subprocess.run(["fluidsynth", "-ni", "-R", "0", "-C", "0", "-g", "0.8", "-F", str(wp), "-r", str(SR),
+        subprocess.run([tool("fluidsynth"), "-ni", "-R", "0", "-C", "0", "-g", "0.8", "-F", str(wp), "-r", str(SR),
                         SOUNDFONT, str(mp)], check=True, capture_output=True)
         a, _ = sf.read(wp, always_2d=True)
     a = a.T.astype(np.float64)

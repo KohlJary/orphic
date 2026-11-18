@@ -41,8 +41,22 @@ def main(argv=None):
     c.add_argument("--bars", help="read: a bar or range, like 3 or 1-4")
     c.add_argument("--file", help="import: a .mid file")
     c.add_argument("--track", help="import: one named track of it")
+    rp = sub.add_parser("reaper", help="build a song as a Reaper session (session.rpp) and render it")
+    rp.add_argument("song")
+    rp.add_argument("-o", "--out", required=True)
     a = ap.parse_args(argv)
     log = lambda s: print(s, file=sys.stderr, flush=True)
+    if a.cmd == "reaper":
+        import json
+        from .reaper import ReaperError, build
+        from .song import SongError
+        try:
+            print(json.dumps(build(Path(a.song), Path(a.out), log=log), default=float))
+        except (SongError, ReaperError) as e:
+            print(json.dumps({"error": str(e)})); sys.exit(2)
+        except Exception as e:
+            print(json.dumps({"error": f"{type(e).__name__}: {e}"})); sys.exit(2)
+        return
     if a.cmd == "clip":
         import json
         import re as _re
