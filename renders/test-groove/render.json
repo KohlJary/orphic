@@ -1,0 +1,51 @@
+{
+ "title": "Test groove",
+ "tempo": 92,
+ "length_s": 41.74,
+ "sections": [
+  [
+   "a",
+   0.0
+  ],
+  [
+   "b",
+   10.435
+  ],
+  [
+   "a",
+   20.87
+  ],
+  [
+   "b",
+   31.304
+  ]
+ ],
+ "tracks": {
+  "drums": {
+   "plays": "808 kit",
+   "notes": 0,
+   "hits": 248,
+   "peak_db": -0.4
+  },
+  "bass": {
+   "plays": "nekobi",
+   "notes": 60,
+   "hits": 0,
+   "peak_db": -23.2
+  },
+  "pad": {
+   "plays": "vitalium",
+   "notes": 50,
+   "hits": 0,
+   "peak_db": -6.7
+  },
+  "keys": {
+   "plays": "General MIDI 5",
+   "notes": 36,
+   "hits": 0,
+   "peak_db": -13.8
+  }
+ },
+ "mix_peak_before_normalising_db": 1.7,
+ "would_have_clipped": true
+}
