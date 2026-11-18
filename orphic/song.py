@@ -55,8 +55,10 @@ SOUNDFONT = "/usr/share/soundfonts/FluidR3_GM.sf2"
 SFZ_DIR = Path(os.environ.get("ORPHIC_SFZ_DIR", Path.home() / "acousmatic-data" / "guitar"))
 # sampled instruments: name -> folder under SFZ_DIR holding one .sfz (with its license)
 SFZ_LIBS = {"fsbs-direct": "freepats-direct"}   # Freepats FSBS electric guitar, direct (CC0): run it into an amp
-PM_SECONDS = 0.11      # a palm-muted note is damped this quickly
-PM_LOWPASS_HZ = 1100.0
+PM_SECONDS = float(os.environ.get("ORPHIC_PM_SECONDS", 0.08))      # how quickly a palm-muted note is damped
+PM_LOWPASS_HZ = float(os.environ.get("ORPHIC_PM_LOWPASS", 700.0))  # the palm takes the highs off the string
+PM_GAIN = float(os.environ.get("ORPHIC_PM_GAIN", 1.4))             # chugs are picked hard
+PM_CLICK_S = 0.006                                                  # the pick's click stays bright
 KIT_DIR = Path(os.environ.get("ORPHIC_808", Path.home() / "acousmatic-data" / "808" / "fischer"))
 KIT_DEFAULT = {"kick": "BD/BD2575", "snare": "SD/SD5025", "clap": "CP/CP", "hat": "CH/CH", "open": "OH/OH50",
                "rim": "RS/RS", "cowbell": "CB/CB", "low_tom": "LT/LT50", "mid_tom": "MT/MT50", "high_tom": "HT/HT50",
@@ -387,13 +389,21 @@ def render_source(tr: Track, total: float):
     a, kind = one(Track(tr.name, tr.spec, events=open_ev)) if open_ev else (np.zeros((2, int(total * SR))), None)
     b, kind2 = one(Track(tr.name, tr.spec, events=pm_ev))
     from scipy.signal import butter, sosfilt
-    b = sosfilt(butter(2, PM_LOWPASS_HZ / (SR / 2), output="sos"), b, axis=1)
-    # the damping: each palm-muted note dies away over about PM_SECONDS
-    env = np.ones(b.shape[1])
+    dark = sosfilt(butter(2, PM_LOWPASS_HZ / (SR / 2), output="sos"), b, axis=1)
+    click = np.zeros(b.shape[1])     # the first few ms of each mute keep their highs
     for e in pm_ev:
-        i, j = int(e.start * SR), min(b.shape[1], int((e.start + 0.35) * SR))
+        i = int(e.start * SR)
+        click[i:i + int(PM_CLICK_S * SR)] = 1.0
+    b = (dark * (1 - click) + b * click) * PM_GAIN
+    # the damping: each palm-muted note dies away over about PM_SECONDS
+    # each mute's damping runs only until the next palm-muted note starts (at speed, a
+    # sixteenth is under 100 ms: a longer envelope would flatten the next attack)
+    env = np.ones(b.shape[1])
+    starts = sorted({int(e.start * SR) for e in pm_ev})
+    for k, i in enumerate(starts):
+        j = min(b.shape[1], i + int(0.35 * SR), starts[k + 1] if k + 1 < len(starts) else b.shape[1])
         t = np.arange(j - i) / SR
-        env[i:j] = np.minimum(env[i:j], np.exp(-t / (PM_SECONDS / 2.5)) * 0.9 + 0.1 * (t < 0.01))
+        env[i:j] = np.exp(-t / (PM_SECONDS / 2.5)) * 0.9 + 0.1 * (t < 0.01)
     b = b * env
     return _fit(a, total) + _fit(b, total), (kind or kind2) + " (with palm mutes)"
 
