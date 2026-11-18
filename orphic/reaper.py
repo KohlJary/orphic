@@ -53,7 +53,7 @@ JSFX = {"gain": ["gain_db"], "highpass": ["cutoff_frequency_hz"], "lowpass": ["c
 JSFX_DEFAULTS = {"gain": [1.0], "highpass": [50.0], "lowpass": [50.0], "noisegate": [-100.0, 10.0, 1.0, 100.0],
                  "compressor": [0.0, 1.0, 1.0, 100.0], "distortion": [25.0], "delay": [0.5, 0.0, 0.5],
                  "chorus": [1.0, 0.25, 7.0, 0.0, 0.5]}
-PM_SFZ = "ampeg_decay=0.08 ampeg_sustain=0 ampeg_release=0.02 fil_type=lpf_2p cutoff=700 volume=11"
+PM_SFZ = "ampeg_decay=0.08 ampeg_sustain=0 ampeg_release=0.02 fil_type=lpf_2p cutoff=700 volume=15"
 
 
 def sfizz_state(sfz: Path) -> str:

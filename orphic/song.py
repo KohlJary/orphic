@@ -74,10 +74,12 @@ BUILTIN_FX = ("distortion", "compressor", "reverb", "chorus", "delay", "gain", "
 SOUNDFONT = "/usr/share/soundfonts/FluidR3_GM.sf2"
 SFZ_DIR = Path(os.environ.get("ORPHIC_SFZ_DIR", Path.home() / "acousmatic-data" / "guitar"))
 # sampled instruments: name -> folder under SFZ_DIR holding one .sfz (with its license)
-SFZ_LIBS = {"fsbs-direct": "freepats-direct"}   # Freepats FSBS electric guitar, direct (CC0): run it into an amp
+SFZ_LIBS = {"fsbs-direct": "freepats-direct"}
+SFZ_LEVEL_DB = {"fsbs-direct": 8.0}   # a DI guitar sample set comes out ~8 dB under a synth at the same gain
+INSTRUMENT_KEYS = {"synth", "patch", "params", "gm", "sfz", "kit", "samples", "knobs", "gain", "volume", "pan", "fx", "rig"}   # Freepats FSBS electric guitar, direct (CC0): run it into an amp
 PM_SECONDS = float(os.environ.get("ORPHIC_PM_SECONDS", 0.08))      # how quickly a palm-muted note is damped
 PM_LOWPASS_HZ = float(os.environ.get("ORPHIC_PM_LOWPASS", 700.0))  # the palm takes the highs off the string
-PM_GAIN = float(os.environ.get("ORPHIC_PM_GAIN", 1.4))             # chugs are picked hard
+PM_GAIN = float(os.environ.get("ORPHIC_PM_GAIN", 2.2))             # chugs are picked hard
 PM_CLICK_S = 0.006                                                  # the pick's click stays bright
 KIT_DIR = Path(os.environ.get("ORPHIC_808", Path.home() / "acousmatic-data" / "808" / "fischer"))
 KIT_DEFAULT = {"kick": "BD/BD2575", "snare": "SD/SD5025", "clap": "CP/CP", "hat": "CH/CH", "open": "OH/OH50",
@@ -252,7 +254,16 @@ def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], fl
     instruments = song.get("instruments") or {}
     sections = song.get("sections") or {}
     arrangement = song.get("arrangement") or list(sections)
-    tracks = {n: Track(n, spec or {}) for n, spec in instruments.items()}
+    tracks = {}
+    for n, spec in instruments.items():
+        spec = dict(spec or {})
+        unknown = set(spec) - INSTRUMENT_KEYS
+        if unknown:
+            raise SongError(f"instrument {n!r} has {', '.join(sorted(unknown))}, which the studio doesn't know; "
+                            f"an instrument takes {', '.join(sorted(INSTRUMENT_KEYS - {'volume'}))}")
+        if "volume" in spec and "gain" not in spec:
+            spec["gain"] = spec.pop("volume")   # volume reads as gain
+        tracks[n] = Track(n, spec)
     t = 0.0
     marks = []
     for name in arrangement:
@@ -391,7 +402,7 @@ def render_sfz(tr: Track, total: float) -> np.ndarray:
         subprocess.run([tool("sfizz_render"), "--sfz", str(sfz), "--midi", str(mp), "--wav", str(wp), "-s", str(SR)],
                        check=True, capture_output=True, timeout=600)
         a, _ = sf.read(wp, always_2d=True)
-    return _fit(a.T.astype(np.float64), total)
+    return _fit(a.T.astype(np.float64), total) * 10 ** (SFZ_LEVEL_DB.get(name, 0.0) / 20)
 
 
 def render_gm(tr: Track, total: float) -> np.ndarray:
@@ -561,6 +572,47 @@ def render_source(tr: Track, total: float):
     return _fit(a, total) + _fit(b, total), (kind or kind2) + " (with palm mutes)"
 
 
+def check_chain(chain) -> None:
+    """Every effect in a chain exists and every setting names a real knob (SongError says which)."""
+    if not isinstance(chain, list) or not chain:
+        raise SongError("a chain is a list of effects")
+    import inspect
+    import pedalboard as pb
+    built = {"distortion": pb.Distortion, "compressor": pb.Compressor, "reverb": pb.Reverb, "chorus": pb.Chorus,
+             "delay": pb.Delay, "gain": pb.Gain, "highpass": pb.HighpassFilter, "lowpass": pb.LowpassFilter,
+             "noisegate": pb.NoiseGate, "convolution": pb.Convolution, "phaser": pb.Phaser, "bitcrush": pb.Bitcrush,
+             "ladderfilter": pb.LadderFilter}
+    for i, fx in enumerate(chain, 1):
+        if not isinstance(fx, dict):
+            raise SongError(f"effect {i} isn't an object")
+        if "builtin" in fx:
+            kind = str(fx["builtin"]).lower()
+            if kind not in built:
+                raise SongError(f"effect {i}: no built-in {kind!r}; built-ins: {', '.join(built)} "
+                                "(an EQ is highpass/lowpass, or the amp's own tone knobs)")
+            try:
+                ok = set(inspect.signature(built[kind].__init__).parameters) - {"self"}
+            except (TypeError, ValueError):
+                ok = None
+            bad = set(fx) - {"builtin"} - (ok or set(fx))
+            if bad:
+                raise SongError(f"effect {i} ({kind}) has no {', '.join(sorted(bad))}; it takes {', '.join(sorted(ok))}")
+        elif "plugin" in fx:
+            name = str(fx["plugin"])
+            path = name if os.path.exists(name) else next(
+                (str(Path(d) / EFFECTS.get(name.lower(), name)) for d in PLUGIN_DIRS
+                 if (Path(d) / EFFECTS.get(name.lower(), name)).exists()), None)
+            if not path:
+                raise SongError(f"effect {i}: no plugin {name!r} (known: {', '.join(EFFECTS)}, or a built-in)")
+            from pedalboard import load_plugin
+            try:
+                _set_params(load_plugin(path), fx.get("params"))
+            except SongError as e:
+                raise SongError(f"effect {i} ({name}): {e}".replace("the synth", "it"))
+        else:
+            raise SongError(f"effect {i} needs plugin (a VST3 like swankyamp) or builtin")
+
+
 def apply_fx(a: np.ndarray, chain) -> np.ndarray:
     """An instrument's effects, in order: a VST3 effect by name (swankyamp, zamtube, or a path)
     with params, or one of pedalboard's built-ins (distortion, compressor, reverb, delay,
@@ -626,15 +678,23 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print) -> Dict
         a = _pan(a * float(tr.spec.get("gain", 0.8)), tr.spec.get("pan", 0.0))
         sf.write(out_dir / "stems" / f"{name}.wav", a.T, SR, subtype="PCM_24")
         mix += a
+        mono = a.mean(axis=0)
+        sounding = mono[np.abs(mono) > 1e-4]
         info[name] = {"plays": kind, "notes": len(tr.events), "hits": len(tr.hits),
-                      "peak_db": round(float(20 * np.log10(np.abs(a).max() + 1e-12)), 1)}
+                      "peak_db": round(float(20 * np.log10(np.abs(a).max() + 1e-12)), 1),
+                      "loudness_db": round(float(20 * np.log10(np.sqrt(np.mean(sounding ** 2)) + 1e-12)), 1)
+                      if len(sounding) else None}
         log(f"  {name}: {kind}, {len(tr.events) or len(tr.hits)} {'notes' if tr.events else 'hits'}")
     peak = np.abs(mix).max()
     clipped = bool(peak > 1.0)
     if peak > 0:
         mix = mix / peak * 0.89   # about -1 dBFS
     sf.write(out_dir / "render.wav", mix.T, SR, subtype="PCM_24")
+    loud = {n: i["loudness_db"] for n, i in info.items() if i.get("loudness_db") is not None}
+    top = max(loud.values()) if loud else 0
+    balance = [f"{n}: {v - top:+.1f} dB" for n, v in sorted(loud.items(), key=lambda kv: -kv[1])]
     result = {"title": song.get("title", Path(song_path).stem), "tempo": song["tempo"], "length_s": round(length, 2),
+              "balance": balance,
               "sections": marks, "tracks": info, "mix_peak_before_normalising_db": round(float(20 * np.log10(peak + 1e-12)), 1),
               "would_have_clipped": clipped}
     (out_dir / "render.json").write_text(json.dumps(result, indent=1))
