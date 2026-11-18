@@ -1,0 +1,12 @@
+desc:Orphic noise gate (pedalboard NoiseGate: downward expander)
+slider1:threshold_db=-100<-100,0,0.1>threshold_db
+slider2:ratio=10<1,100,0.1>ratio
+slider3:attack_ms=1<0.01,500,0.01>attack_ms
+slider4:release_ms=100<1,5000,1>release_ms
+@slider
+thr = 10^(threshold_db/20); at = exp(-1/(attack_ms*0.001*srate)); rl = exp(-1/(release_ms*0.001*srate));
+@sample
+x = max(abs(spl0), abs(spl1));
+env = x > env ? at*env + (1-at)*x : rl*env + (1-rl)*x;
+g = env < thr && env > 0 ? (env/thr)^(ratio-1) : 1;
+spl0 *= g; spl1 *= g;

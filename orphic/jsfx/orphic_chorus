@@ -1,0 +1,18 @@
+desc:Orphic chorus (pedalboard Chorus)
+slider1:rate_hz=1<0,20,0.01>rate_hz
+slider2:depth=0.25<0,1,0.01>depth
+slider3:centre_delay_ms=7<1,100,0.1>centre_delay_ms
+slider4:feedback=0<-0.95,0.95,0.01>feedback
+slider5:mix=0.5<0,1,0.01>mix
+@init
+buf = 0; len = floor(srate*0.25); pos = 0; ph = 0;
+@sample
+ph += 2*$pi*rate_hz/srate; ph > 2*$pi ? ph -= 2*$pi;
+dl = (centre_delay_ms*0.001*srate) * (1 + depth*sin(ph)); dr = (centre_delay_ms*0.001*srate) * (1 + depth*sin(ph+$pi/2));
+rl = pos - dl; rl < 0 ? rl += len; rr = pos - dr; rr < 0 ? rr += len;
+il = floor(rl); fl = rl - il; il2 = il+1; il2 >= len ? il2 -= len;
+ir = floor(rr); fr = rr - ir; ir2 = ir+1; ir2 >= len ? ir2 -= len;
+w0 = buf[il*2]*(1-fl) + buf[il2*2]*fl; w1 = buf[ir*2+1]*(1-fr) + buf[ir2*2+1]*fr;
+buf[pos*2] = spl0 + w0*feedback; buf[pos*2+1] = spl1 + w1*feedback;
+pos += 1; pos >= len ? pos = 0;
+spl0 = spl0*(1-mix) + w0*mix; spl1 = spl1*(1-mix) + w1*mix;

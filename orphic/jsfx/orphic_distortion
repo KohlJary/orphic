@@ -1,0 +1,6 @@
+desc:Orphic distortion (pedalboard Distortion: tanh drive)
+slider1:drive_db=25<0,80,0.1>drive_db
+@slider
+d = 10^(drive_db/20);
+@sample
+spl0 = tanh(spl0*d); spl1 = tanh(spl1*d);

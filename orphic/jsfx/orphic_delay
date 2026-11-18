@@ -1,0 +1,14 @@
+desc:Orphic delay (pedalboard Delay)
+slider1:delay_seconds=0.5<0,5,0.001>delay_seconds
+slider2:feedback=0<0,1,0.01>feedback
+slider3:mix=0.5<0,1,0.01>mix
+@init
+buf = 0; len = srate*5+1; pos = 0;
+@slider
+n = max(1, floor(delay_seconds*srate));
+@sample
+r = pos - n; r < 0 ? r += len;
+d0 = buf[r*2]; d1 = buf[r*2+1];
+buf[pos*2] = spl0 + d0*feedback; buf[pos*2+1] = spl1 + d1*feedback;
+pos += 1; pos >= len ? pos = 0;
+spl0 = spl0*(1-mix) + d0*mix; spl1 = spl1*(1-mix) + d1*mix;

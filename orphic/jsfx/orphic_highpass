@@ -1,0 +1,8 @@
+desc:Orphic highpass (pedalboard HighpassFilter, 2-pole, Q 0.707)
+slider1:cutoff_frequency_hz=50<10,20000,1>cutoff_frequency_hz
+@slider
+w0 = 2*$pi*min(cutoff_frequency_hz, srate*0.45)/srate; al = sin(w0)/(2*0.7071); c = cos(w0);
+a0 = 1+al; b0 = (1+c)/2/a0; b1 = -(1+c)/a0; b2 = b0; a1 = -2*c/a0; a2 = (1-al)/a0;
+@sample
+o0 = b0*spl0 + b1*x10 + b2*x20 - a1*y10 - a2*y20; x20 = x10; x10 = spl0; y20 = y10; y10 = o0; spl0 = o0;
+o1 = b0*spl1 + b1*x11 + b2*x21 - a1*y11 - a2*y21; x21 = x11; x11 = spl1; y21 = y11; y11 = o1; spl1 = o1;

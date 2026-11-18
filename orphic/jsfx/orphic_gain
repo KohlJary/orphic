@@ -1,0 +1,6 @@
+desc:Orphic gain (pedalboard Gain)
+slider1:gain_db=1<-60,40,0.1>gain_db
+@slider
+g = 10^(gain_db/20);
+@sample
+spl0 *= g; spl1 *= g;
