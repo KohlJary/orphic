@@ -143,7 +143,8 @@ def _write_midi(events, path: Path, tempo: float, meter: int, drums=None):
     if drums is not None:
         for t, voice, vel in drums:
             a = int(round(t / spb * tpb))
-            n = DRUM_NOTES.get(voice, 36)
+            from .song import ACOUSTIC_NOTES
+            n = DRUM_NOTES.get(voice, ACOUSTIC_NOTES.get(voice, 36)) if not str(voice).isdigit() else int(voice)
             evs += [(a, 1, mido.Message("note_on", channel=9, note=n, velocity=vel)),
                     (a + tpb // 8, 0, mido.Message("note_off", channel=9, note=n, velocity=0))]
     for e in events:
@@ -211,7 +212,9 @@ def build(song_path: Path, out_dir: Path, log=print, timeout: float = 300) -> Di
         _write_midi(tr.events, midi, tempo, meter, drums=tr.hits if spec.get("kit") else None)
         spb = 60.0 / tempo
         if spec.get("kit"):
-            qn = [[t / spb, t / spb + 0.125, 9, DRUM_NOTES.get(v, 36), vel] for t, v, vel in tr.hits]
+            from .song import ACOUSTIC_NOTES
+            notes_of = ACOUSTIC_NOTES if str(spec["kit"]).lower() != "808" else DRUM_NOTES
+            qn = [[t / spb, t / spb + 0.125, 9, notes_of.get(v, 36), vel] for t, v, vel in tr.hits]
         else:
             qn = [[e.start / spb, (e.start + e.dur) / spb, 1 if e.pm else 0, e.midi, e.vel] for e in tr.events]
         entry = {"name": name, "qn": qn, "end_qn": total / spb, "vol": float(spec.get("gain", 0.8)),
@@ -241,7 +244,7 @@ def build(song_path: Path, out_dir: Path, log=print, timeout: float = 300) -> Di
                 entry.update({"live": True, "synth": "sfizz (SFZTools)", "layers": layers, "fx": fxs,
                               "shows": f"sampled {spec['sfz']} in sfizz" + (", palm mutes on their own track"
                                                                               if len(layers) > 1 else "")})
-        elif livable and spec.get("kit"):
+        elif livable and spec.get("kit") and str(spec["kit"]).lower() == "808":
             wrap = kit_sfz(spec, out_dir / "media" / f"{safe}.sfz")
             entry.update({"live": True, "synth": "sfizz (SFZTools)", "state": sfizz_state(wrap), "params": {},
                           "fx": fxs, "shows": "808 kit in sfizz"})

@@ -37,7 +37,10 @@ A part can also be a MIDI clip from the project's clips/ folder, looped to fill 
 
 Instruments: `synth` (a VST3 synth by name or path: vitalium, nekobi, surge, ...,
 with `params` by name, or `patch`, a saved patch from her gun belt), `gm` (a General
-MIDI program, played by FluidSynth), or `kit: "808"` (a real TR-808, sampled at known
+MIDI program, played by FluidSynth), `kit:` an acoustic kit (black-pearl, red-zeppelin,
+blonde-bop, blonde-bop-hr, buskmans-holiday; AVL Drumkits, with kick, snare, rim, hat,
+hat_pedal, open, low_tom, mid_tom, high_tom, crash, ride, ride_bell, splash, crash2),
+or `kit: "808"` (a real TR-808, sampled at known
 settings; `kick: BD2575` and so on choose the samples), or `sfz` (a sampled instrument: fsbs-direct, a
 real electric guitar). `fx` is an effects chain and `rig` a saved one from the gun belt.
 Every instrument has `gain` and `pan`.
@@ -77,6 +80,14 @@ KIT_DIR = Path(os.environ.get("ORPHIC_808", Path.home() / "acousmatic-data" / "8
 KIT_DEFAULT = {"kick": "BD/BD2575", "snare": "SD/SD5025", "clap": "CP/CP", "hat": "CH/CH", "open": "OH/OH50",
                "rim": "RS/RS", "cowbell": "CB/CB", "low_tom": "LT/LT50", "mid_tom": "MT/MT50", "high_tom": "HT/HT50",
                "cymbal": "CY/CY5050", "clave": "CL/CL", "maracas": "MA/MA"}
+# acoustic kits: x42 AVLDrums' SoundFonts (Glen MacArthur's AVL Drumkits), General MIDI drum notes
+AVL_DIR = Path("/usr/lib/lv2/avldrums.lv2")
+ACOUSTIC_KITS = {"black-pearl": "Black_Pearl_4_LV2.sf2", "red-zeppelin": "Red_Zeppelin_4_LV2.sf2",
+                 "blonde-bop": "Blonde_Bop_LV2.sf2", "blonde-bop-hr": "Blonde_Bop_HR_LV2.sf2",
+                 "buskmans-holiday": "Buskmans_Holiday_LV2.sf2"}
+ACOUSTIC_NOTES = {"kick": 36, "rim": 37, "snare": 38, "low_tom": 41, "hat": 42, "hat_pedal": 44, "mid_tom": 45,
+                  "open": 46, "high_tom": 48, "crash": 49, "cymbal": 49, "ride": 51, "ride_bell": 53, "splash": 55,
+                  "crash2": 57}
 BELT = Path(os.environ.get("ORPHIC_BELT", Path.home() / "orphic" / "belt"))
 
 NOTE = re.compile(r"^([A-Ga-g])([#b]?)(-?\d)$")
@@ -188,12 +199,13 @@ def bar_fill(text: str, beats_per_bar: int) -> List[str]:
     return out
 
 
-def parse_drums(grid: Dict[str, str], beats_per_bar: int, spb: float, t0: float, bars: int):
+def parse_drums(grid: Dict[str, str], beats_per_bar: int, spb: float, t0: float, bars: int, kit: str = "808"):
     steps = beats_per_bar * 4
     hits = []
+    voices = ACOUSTIC_NOTES if str(kit).lower() in ACOUSTIC_KITS else KIT_DEFAULT
     for voice, text in (grid or {}).items():
-        if voice not in KIT_DEFAULT:
-            raise SongError(f"no drum called {voice!r}; the kit has {', '.join(KIT_DEFAULT)}")
+        if voice not in voices:
+            raise SongError(f"no drum called {voice!r}; the {kit} kit has {', '.join(voices)}")
         bar_texts = [b.replace(" ", "") for b in str(text).split("|")]
         for bi in range(bars):
             bt = bar_texts[bi % len(bar_texts)]
@@ -257,7 +269,7 @@ def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], fl
                     raise SongError(f"{part} is a drum kit: write a 16-step grid per drum, one bar each, like "
                                     f"{part}: {{kick: \"x.......x.x.....\", snare: \"....x.......x...\", "
                                     f"hat: \"x.x.x.x.x.x.x.x.\"}} (\"|\" between bars)")
-                tr.hits += parse_drums(content, meter, spb, t, bars)
+                tr.hits += parse_drums(content, meter, spb, t, bars, str(tr.spec.get("kit")))
             elif isinstance(content, dict) and content.get("clip"):
                 tr.events += _clip_events(content, base, meter, spb, t, bars)
             elif isinstance(content, dict):
@@ -425,6 +437,11 @@ def _sample(rel: str) -> np.ndarray:
 
 
 def render_kit(tr: Track, total: float) -> np.ndarray:
+    kit = str(tr.spec.get("kit")).lower()
+    if kit in ACOUSTIC_KITS:
+        return render_acoustic(tr, total, AVL_DIR / ACOUSTIC_KITS[kit])
+    if kit != "808":
+        raise SongError(f"no kit {tr.spec.get('kit')!r}; kits: 808, {', '.join(ACOUSTIC_KITS)}")
     choice = dict(KIT_DEFAULT)
     for v, s in (tr.spec.get("samples") or {}).items():
         choice[v] = s if "/" in s else f"{s[:2]}/{s}"
@@ -437,6 +454,36 @@ def render_kit(tr: Track, total: float) -> np.ndarray:
         if a < n:
             out[a:b] += y[: b - a]
     return np.vstack([out, out])
+
+
+def render_acoustic(tr: Track, total: float, sf2: Path) -> np.ndarray:
+    """An acoustic kit: the hits as MIDI on its General MIDI notes, played by FluidSynth."""
+    import mido
+    if not sf2.exists():
+        raise SongError(f"the kit's samples aren't installed ({sf2.name})")
+    mid = mido.MidiFile(ticks_per_beat=960)
+    trk = mido.MidiTrack()
+    mid.tracks.append(trk)
+    trk.append(mido.MetaMessage("set_tempo", tempo=500000, time=0))
+    evs = []
+    for t, voice, vel in tr.hits:
+        a = int(round(t * 1920))
+        n = ACOUSTIC_NOTES[voice]
+        evs += [(a, 1, mido.Message("note_on", channel=0, note=n, velocity=vel)),
+                (a + 240, 0, mido.Message("note_off", channel=0, note=n, velocity=0))]
+    evs.sort(key=lambda x: (x[0], x[1]))
+    last = 0
+    for at, _, m in evs:
+        m.time = at - last
+        last = at
+        trk.append(m)
+    with tempfile.TemporaryDirectory() as d:
+        mp, wp = Path(d) / "k.mid", Path(d) / "k.wav"
+        mid.save(mp)
+        subprocess.run([tool("fluidsynth"), "-ni", "-R", "0", "-C", "0", "-g", "0.8", "-F", str(wp), "-r", str(SR),
+                        str(sf2), str(mp)], check=True, capture_output=True, timeout=600)
+        a, _ = sf.read(wp, always_2d=True)
+    return _fit(a.T.astype(np.float64), total)
 
 
 def resolve_chain(spec: Dict):
@@ -551,7 +598,7 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print) -> Dict
     for name, tr in tracks.items():
         if tr.spec.get("kit"):
             a = render_kit(tr, total)
-            kind = "808 kit"
+            kind = f"{tr.spec.get('kit')} kit"
         else:
             a, kind = render_source(tr, total)
         a = apply_fx(a, resolve_chain(tr.spec))
