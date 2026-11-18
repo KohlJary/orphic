@@ -23,10 +23,21 @@ x/. notation her ears show her. Melodic parts are NOTE/beats tokens, chords by n
         keys: "Em/4 | G/4 | C/4 | B7/4"
     arrangement: [verse, verse]
 
+Lengths are in beats. In 4/4: 4 is the whole bar, 2 a half note, 1 a quarter, 0.5 an
+eighth, 0.25 a sixteenth. Each bar should add up to the meter: whatever a bar doesn't fill
+is silence (write it as r/beats when that's what you mean). E3/1 rings for one beat, not
+until the next note; E3/4 holds the whole bar.
+
+Chords: a name (Em/4, G/2) or the notes in brackets. A power chord is root, fifth and
+octave: [E2 B2 E3]/1. Palm-mute with pm after the length ([E2 B2]/0.25pm), accent with ^.
+A chugging bar: "[E2 B2]/0.25pm [E2 B2]/0.25pm [E2 B2]/0.5pm [G2 D3]/1 [A2 E3]/2".
+
 Instruments: `synth` (a VST3 synth by name or path: vitalium, nekobi, surge, ...,
 with `params` by name, or `patch`, a saved patch from her gun belt), `gm` (a General
 MIDI program, played by FluidSynth), or `kit: "808"` (a real TR-808, sampled at known
-settings; `kick: BD2575` and so on choose the samples). Every instrument has `gain` and `pan`.
+settings; `kick: BD2575` and so on choose the samples), or `sfz` (a sampled instrument: fsbs-direct, a
+real electric guitar). `fx` is an effects chain and `rig` a saved one from the gun belt.
+Every instrument has `gain` and `pan`.
 Rendering is deterministic: the same file gives the same audio.
 """
 from __future__ import annotations
@@ -141,6 +152,26 @@ def parse_melodic(text: str, beats_per_bar: int, spb: float, t0: float, bars: in
             beat += L
         if beat > beats_per_bar + 1e-6:
             raise SongError(f"bar {bi + 1} '{bt}' has {beat:g} beats, more than {beats_per_bar}")
+    return out
+
+
+def bar_fill(text: str, beats_per_bar: int) -> List[str]:
+    """What each written bar holds, and any bar that leaves beats silent."""
+    out = []
+    for bi, bt in enumerate(b.strip() for b in str(text).split("|")):
+        beats, toks = 0.0, []
+        for tok in re.findall(r"\[[^\]]*\]/\S+|\S+", bt):
+            what, _, length = tok.replace("pm", "").rstrip("^").rpartition("/")
+            try:
+                L = float(length)
+            except ValueError:
+                continue
+            beats += L
+            toks.append(f"{'rest' if what.lower() == 'r' else what} {L:g}" + (" muted" if "pm" in tok else ""))
+        line = f"bar {bi + 1}: " + ", ".join(toks) + f" = {beats:g} of {beats_per_bar} beats"
+        if beats < beats_per_bar - 1e-6:
+            line += f" (the last {beats_per_bar - beats:g} beats are silent)"
+        out.append(line)
     return out
 
 

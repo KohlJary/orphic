@@ -67,8 +67,12 @@ def noodle(instrument: Dict, phrase, tempo: float = 100.0, loops: int = 2, meter
             if r[0] != last:
                 notes.append(f"{librosa.midi_to_note(r[0], unicode=False)}@{r[1]:.2f}s")
             last = r[0]
+    from .song import bar_fill
+    played = bar_fill(phrase, meter) if not isinstance(phrase, dict) else None
     return {"audio": str(out_dir / "render.wav"), "length_s": res["length_s"], "sound": heard,
-            "sound_raw": sound, "notes_heard": notes[:48],
+            "sound_raw": sound, "played": played, "notes_heard": notes[:48],
+            "notes_heard_is": ("a pitch tracker's guess at the audio, for checking by ear; it misses or misreads "
+                               "short, palm-muted and distorted notes. 'played' is what was actually played."),
             "would_have_clipped": res["would_have_clipped"]}
 
 
