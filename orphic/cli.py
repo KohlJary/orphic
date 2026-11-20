@@ -59,7 +59,7 @@ def main(argv=None):
     sp.add_argument("name", nargs="?")
     sp.add_argument("--says", help="save: what room it is, in your words")
     sp.add_argument("--numbers", help='save: JSON, like {"size": 0.8, "walls_ms": 40}; anything left out comes from '
-                                      'the built-in of the same name')
+                                      'the built-in of the same name, or else from room')
     a = ap.parse_args(argv)
     log = lambda s: print(s, file=sys.stderr, flush=True)
     if a.cmd == "check-chain":

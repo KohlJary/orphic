@@ -155,15 +155,21 @@ def listing() -> Dict[str, Dict]:
 
 
 def save_space(name: str, says: str, numbers: Dict) -> Dict:
-    """Her own space on the gun belt: what it is in her words, and its numbers."""
+    """Her own space on the gun belt: what it is in her words, and its numbers. Numbers she
+    leaves out come from the built-in of the same name, or else from "room", and the result
+    says which."""
     n = slug(name)
     if not n:
         raise SpaceError("a space needs a name")
     if not (says or "").strip():
         raise SpaceError("a space needs a line in your words saying what room it is")
-    sp = _check({**BUILT_IN.get(n, {}), **(numbers or {})}, n)
+    start = n if n in BUILT_IN else "room"
+    numbers = {k: v for k, v in (numbers or {}).items() if k in FIELDS}
+    sp = _check({**BUILT_IN[start], **numbers}, n)
     entry = {"name": n, "kind": "space", "says": says.strip(), **sp}
+    filled = [k for k in FIELDS if k not in numbers]
     _belt().mkdir(parents=True, exist_ok=True)
     (_belt() / f"{n}.json").write_text(json.dumps(entry, indent=1))
     _ring.cache_clear()
-    return {**entry, "ring_s": ring_s(n)}
+    return {**entry, "ring_s": ring_s(n),
+            **({"from_" + start.replace("-", "_"): filled} if filled else {})}

@@ -192,3 +192,10 @@ def test_param_cache_is_keyed_by_plugin_file(tmp_path, monkeypatch):
     f.write_text("xy")
     _, k2 = S._param_cache(str(f))
     assert k1 != k2 and str(f) in k1
+
+
+def test_her_space_fills_what_she_leaves_out_from_room_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setenv("ORPHIC_BELT", str(tmp_path))
+    saved = spaces.save_space("attic", "under the roof", {"size": 0.4})
+    assert saved["size"] == 0.4 and saved["damping"] == spaces.BUILT_IN["room"]["damping"]
+    assert "damping" in saved["from_room"] and "size" not in saved["from_room"]
