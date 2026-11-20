@@ -164,9 +164,10 @@ def _write_midi(events, path: Path, tempo: float, meter: int, drums=None):
 def _normalized(plugin_path: str, params: Dict) -> Dict[str, float]:
     """Her settings as the plugin's own normalized values (what Reaper takes)."""
     from pedalboard import load_plugin
-    from .song import _set_params
+    from .song import _quick_load, _set_params
+    _quick_load()
     p = load_plugin(plugin_path)
-    _set_params(p, params)
+    _set_params(p, params, plugin_path)
     return {k: float(p.parameters[k].raw_value) for k in (params or {})}, p.name
 
 

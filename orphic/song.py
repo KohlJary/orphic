@@ -47,6 +47,25 @@ approximation, the real ones were samples), or `kit: "808"` (a real TR-808, samp
 settings; `kick: BD2575` and so on choose the samples), or `sfz` (a sampled instrument: fsbs-direct, a
 real electric guitar). `fx` is an effects chain and `rig` a saved one from the gun belt.
 Every instrument has `gain` and `pan`.
+
+Room: `space: high-ceilings` on an instrument puts it in a named room instead of reverb
+knobs (closet, room, live-room, high-ceilings, hall, cathedral, or one of your own from the
+gun belt); `space: {name: hall, amount: 0.15}` changes one thing about it. `space:` at the
+top of the song puts the whole band in one room. `orphic spaces list` shows each room's
+numbers and how long it rings (measured).
+
+Holding: a section can say `hold: 3` (beats). Whatever is still sounding when the section
+ends keeps ringing that long, and nothing new starts until it's over, so the next section
+arrives when you've decided it should.
+
+    sections:
+      verse: {bars: 8, hold: 2, keys: "..."}
+
+Hearing a change in place: `orphic audition song.yaml chorus --time 3 --repeat 2` plays the
+section before the 3rd chorus, the chorus twice, and the first bars of what follows, without
+rendering the song; `--swap '{"bass": "E2/2 G2/2 | ..."}'` tries different notes for a part
+(or a different hold) just this once. Nothing is written to the song.
+
 Rendering is deterministic: the same file gives the same audio.
 """
 from __future__ import annotations
@@ -76,7 +95,7 @@ SFZ_DIR = Path(os.environ.get("ORPHIC_SFZ_DIR", Path.home() / "acousmatic-data" 
 # sampled instruments: name -> folder under SFZ_DIR holding one .sfz (with its license)
 SFZ_LIBS = {"fsbs-direct": "freepats-direct"}
 SFZ_LEVEL_DB = {"fsbs-direct": 8.0}   # a DI guitar sample set comes out ~8 dB under a synth at the same gain
-INSTRUMENT_KEYS = {"synth", "patch", "params", "gm", "sfz", "kit", "samples", "knobs", "gain", "volume", "pan", "fx", "rig"}   # Freepats FSBS electric guitar, direct (CC0): run it into an amp
+INSTRUMENT_KEYS = {"synth", "patch", "params", "gm", "sfz", "kit", "samples", "knobs", "gain", "volume", "pan", "fx", "rig", "space"}   # Freepats FSBS electric guitar, direct (CC0): run it into an amp
 PM_SECONDS = float(os.environ.get("ORPHIC_PM_SECONDS", 0.08))      # how quickly a palm-muted note is damped
 PM_LOWPASS_HZ = float(os.environ.get("ORPHIC_PM_LOWPASS", 700.0))  # the palm takes the highs off the string
 PM_GAIN = float(os.environ.get("ORPHIC_PM_GAIN", 2.2))             # chugs are picked hard
@@ -281,9 +300,16 @@ def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], fl
         if sec is None:
             raise SongError(f"the arrangement names {name!r}, but there's no such section")
         bars = int(sec.get("bars", 1))
+        try:
+            hold = float(sec.get("hold") or 0)
+        except (TypeError, ValueError):
+            raise SongError(f"hold in {name!r} is a number of beats, like hold: 3")
+        if hold < 0:
+            raise SongError(f"hold in {name!r} can't be negative")
         marks.append((name, round(t, 3)))
+        before = {n: len(tr.events) for n, tr in tracks.items()}
         for part, content in sec.items():
-            if part == "bars":
+            if part in ("bars", "hold"):
                 continue
             if part not in tracks:
                 raise SongError(f"section {name!r} has a part {part!r} that isn't an instrument")
@@ -309,7 +335,15 @@ def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], fl
                                 f"not {sorted(content)}")
             else:
                 tr.events += parse_melodic(content, meter, spb, t, bars)
-        t += bars * meter * spb
+        end = t + bars * meter * spb
+        if hold:
+            # what's still sounding when the section ends keeps ringing for the hold,
+            # and nothing new starts until it's over
+            for n, tr in tracks.items():
+                for e in tr.events[before[n]:]:
+                    if e.start + e.dur >= end - spb * 0.25:   # notes are played a hair short of their length
+                        e.dur = end + hold * spb - e.start
+        t = end + hold * spb
     return tracks, t, marks
 
 
@@ -326,7 +360,86 @@ def _plugin_path(name: str) -> str:
     raise SongError(f"no synth {name!r} (known: {', '.join(SYNTHS)})")
 
 
-def _set_params(plugin, params: Dict):
+PARAM_CACHE = Path(os.environ.get("ORPHIC_CACHE", Path.home() / ".cache" / "orphic")) / "param-values.json"
+_PARAMS: Dict[str, float] = {}
+
+
+def _param_cache(f: str):
+    """Knob values already turned into the plugin's raw 0-1 values, by plugin file (its size
+    and date, so an updated plugin is looked up afresh), knob and value. Finding the raw
+    value is a search over the knob's whole range; the answer never changes."""
+    try:
+        st = os.stat(f)
+        key0 = f"{f}|{st.st_size}|{int(st.st_mtime)}"
+    except OSError:
+        key0 = f"{f}|?"
+    if not _PARAMS and PARAM_CACHE.exists():
+        try:
+            _PARAMS.update(json.loads(PARAM_CACHE.read_text()))
+        except ValueError:
+            pass
+    return _PARAMS, key0
+
+
+def _param_cache_save(cache: Dict[str, float]) -> None:
+    try:
+        PARAM_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PARAM_CACHE.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(cache))
+        tmp.replace(PARAM_CACHE)
+    except OSError:
+        pass
+
+
+def _quick_load():
+    """pedalboard looks at every knob of a plugin as it loads it, even with no knobs to set
+    (Nekobi has 2090, mostly MIDI CCs: ten seconds). With nothing to set that look changes
+    nothing, so it's skipped; _set_params looks only at the knobs a song names."""
+    try:
+        import pedalboard._pedalboard as P
+    except ImportError:
+        return
+    M = P._PythonExternalPluginMixin
+    if getattr(M, "_orphic_quick", False):
+        return
+    full = M.__set_initial_parameter_values__
+
+    def quick(self, parameter_values):
+        if parameter_values:
+            return full(self, parameter_values)
+    M.__set_initial_parameter_values__ = quick
+    M._orphic_quick = True
+
+
+def _set_params(plugin, params: Dict, path: str = ""):
+    """Set a synth's knobs by name. Only the knobs named are looked at: pedalboard's own
+    lookup builds every parameter first (each one searched over 1000 steps), which took a
+    synth like Vitalium about 15 seconds before a note played."""
+    if not params:
+        return
+    try:
+        from pedalboard._pedalboard import AudioProcessorParameter, to_python_parameter_name
+        names = {}
+        for cp in plugin._parameters:
+            n = to_python_parameter_name(cp)
+            if n:
+                names.setdefault(n, cp.name)
+    except Exception:   # a pedalboard without these internals: the slow way below
+        names = None
+    if names is not None and all(k in names for k in params):
+        cache, key0 = _param_cache(str(path or ""))
+        cpp = {cp.name: cp for cp in plugin._parameters}
+        for k, v in params.items():
+            key = f"{key0}|{names[k]}|{json.dumps(v)}"
+            if key not in cache:
+                p = AudioProcessorParameter(plugin, names[k])
+                try:
+                    cache[key] = float(p.get_raw_value_for(v))
+                except Exception:
+                    cache[key] = float(v)
+                _param_cache_save(cache)
+            cpp[names[k]].raw_value = cache[key]
+        return
     for k, v in (params or {}).items():
         if k not in plugin.parameters:
             import difflib
@@ -352,8 +465,10 @@ def render_synth(tr: Track, total: float) -> np.ndarray:
         saved = json.loads(p.read_text())
         spec.setdefault("synth", saved["synth"])
         spec["params"] = {**saved.get("params", {}), **(spec.get("params") or {})}
-    plugin = load_plugin(_plugin_path(spec["synth"]))
-    _set_params(plugin, spec.get("params"))
+    _quick_load()
+    path = _plugin_path(spec["synth"])
+    plugin = load_plugin(path)
+    _set_params(plugin, spec.get("params"), path)
     msgs = []
     for e in tr.events:
         msgs.append(Message("note_on", note=e.midi, velocity=e.vel, time=e.start))
@@ -622,7 +737,8 @@ def check_chain(chain) -> None:
                 raise SongError(f"effect {i}: no plugin {name!r} (known: {', '.join(EFFECTS)}, or a built-in)")
             from pedalboard import load_plugin
             try:
-                _set_params(load_plugin(path), fx.get("params"))
+                _quick_load()
+                _set_params(load_plugin(path), fx.get("params"), path)
             except SongError as e:
                 raise SongError(f"effect {i} ({name}): {e}".replace("the synth", "it"))
         else:
@@ -661,8 +777,9 @@ def apply_fx(a: np.ndarray, chain) -> np.ndarray:
             if not path:
                 raise SongError(f"no effect {name!r} (known: {', '.join(EFFECTS)}, or a built-in)")
             from pedalboard import load_plugin
+            _quick_load()
             eff = load_plugin(path)
-            _set_params(eff, fx.get("params"))
+            _set_params(eff, fx.get("params"), path)
         out = eff(out, SR, reset=True)
         if out.shape[0] == 1:
             out = np.vstack([out, out])
@@ -674,9 +791,21 @@ def _pan(st: np.ndarray, pan: float) -> np.ndarray:
     return np.vstack([st[0] * np.cos(th) * np.sqrt(2), st[1] * np.sin(th) * np.sqrt(2)])
 
 
-def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print) -> Dict:
+def _rooms(song: Dict) -> List:
+    """Every space a song plays in: the whole song's, and each instrument's."""
+    out = [song["space"]] if song.get("space") else []
+    return out + [spec["space"] for spec in (song.get("instruments") or {}).values() if (spec or {}).get("space")]
+
+
+def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print, base: Optional[Path] = None) -> Dict:
+    from . import spaces
     song = yaml.safe_load(Path(song_path).read_text())
-    tracks, length, marks = parse(song, Path(song_path).parent)
+    tracks, length, marks = parse(song, Path(base or Path(song_path).parent))
+    try:
+        rings = [spaces.ring_s(r) for r in _rooms(song)]
+    except spaces.SpaceError as e:
+        raise SongError(str(e))
+    tail = max([tail] + [min(r, 8.0) for r in rings])   # let the longest room finish ringing
     total = length + tail
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "stems").mkdir(exist_ok=True)
@@ -690,6 +819,9 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print) -> Dict
         else:
             a, kind = render_source(tr, total)
         a = apply_fx(a, resolve_chain(tr.spec))
+        if tr.spec.get("space"):
+            a = spaces.apply(a, tr.spec["space"])
+            kind += f", in {tr.spec['space'] if isinstance(tr.spec['space'], str) else 'its own space'}"
         n = mix.shape[1]
         a = a[:, :n] if a.shape[1] >= n else np.pad(a, ((0, 0), (0, n - a.shape[1])))
         a = _pan(a * float(tr.spec.get("gain", 0.8)), tr.spec.get("pan", 0.0))
@@ -703,6 +835,8 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print) -> Dict
                       "loudness_db": round(float(20 * np.log10(np.sqrt(np.mean(sounding ** 2)) + 1e-12)), 1)
                       if len(sounding) else None}
         log(f"  {name}: {kind}, {len(tr.events) or len(tr.hits)} {'notes' if tr.events else 'hits'}")
+    if song.get("space"):
+        mix = spaces.apply(mix, song["space"])   # the whole band in one room (the stems are dry of it)
     peak = np.abs(mix).max()
     clipped = bool(peak > 1.0)
     if peak > 0:

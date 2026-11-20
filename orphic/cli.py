@@ -46,6 +46,20 @@ def main(argv=None):
     rp.add_argument("-o", "--out", required=True)
     cc = sub.add_parser("check-chain", help="check an effects chain before saving it as a rig")
     cc.add_argument("--chain", required=True)
+    au = sub.add_parser("audition", help="hear one section in its place in the song, without rendering the song")
+    au.add_argument("song")
+    au.add_argument("section")
+    au.add_argument("--time", type=int, default=1, help="which time the section comes around (default the 1st)")
+    au.add_argument("--repeat", type=int, default=1, help="play it this many times over, to hear it worn in")
+    au.add_argument("--swap", help='JSON: parts to play differently just this once, {"bass": "E2/1 ...", "hold": 2}')
+    au.add_argument("-o", "--out", required=True)
+    au.add_argument("--listen", action="store_true")
+    sp = sub.add_parser("spaces", help="the rooms a part can play in: list them, or save one of your own")
+    sp.add_argument("op", choices=["list", "save"])
+    sp.add_argument("name", nargs="?")
+    sp.add_argument("--says", help="save: what room it is, in your words")
+    sp.add_argument("--numbers", help='save: JSON, like {"size": 0.8, "walls_ms": 40}; anything left out comes from '
+                                      'the built-in of the same name')
     a = ap.parse_args(argv)
     log = lambda s: print(s, file=sys.stderr, flush=True)
     if a.cmd == "check-chain":
@@ -56,6 +70,34 @@ def main(argv=None):
             print(json.dumps({"ok": True}))
         except (SongError, ValueError) as e:
             print(json.dumps({"error": str(e)})); sys.exit(2)
+        return
+    if a.cmd == "spaces":
+        import json
+        from . import spaces as S
+        try:
+            if a.op == "list":
+                print(json.dumps({"spaces": S.listing()}, indent=1))
+            else:
+                print(json.dumps(S.save_space(a.name or "", a.says or "", json.loads(a.numbers or "{}")), indent=1))
+        except (S.SpaceError, ValueError) as e:
+            print(json.dumps({"error": str(e)})); sys.exit(2)
+        return
+    if a.cmd == "audition":
+        import json
+        from .audition import audition
+        from .song import SongError
+        out = Path(a.out)
+        try:
+            res = audition(Path(a.song), out, a.section, a.time, a.repeat, json.loads(a.swap) if a.swap else None, log=log)
+        except SongError as e:
+            print(json.dumps({"error": str(e)})); sys.exit(2)
+        except Exception as e:
+            print(json.dumps({"error": f"{type(e).__name__}: {e}"})); sys.exit(2)
+        if a.listen:
+            from acousmatic.listen import listen
+            listen(out / "render.wav", out / "listening", engrave=False, offline=True, log=log)
+            res["listening_record"] = str(out / "listening" / "record.md")
+        print(json.dumps(res, indent=1, default=float))
         return
     if a.cmd == "reaper":
         import json

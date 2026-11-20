@@ -45,6 +45,8 @@ Samples aren't in the repo. Point Orphic at your own copies:
 | `orphic render song.yaml [--listen]` | render a song, and hear it back |
 | `orphic reaper song.yaml -o DIR` | build it as a Reaper session and render it there |
 | `orphic clip write/read/list/import` | parts as MIDI, read back as a piano roll |
+| `orphic audition song.yaml SECTION` | one section heard in its place (and as the 5th time round, with `--repeat`), with a part swapped if you like, without rendering the song |
+| `orphic spaces list/save` | the rooms a part can play in, each measured; save one of your own |
 | `orphic noodle` | a riff on loop, heard back fast |
 | `orphic tone` | a guitar through a rig, measured |
 | `orphic monochord SYNTH` / `orphic map-effect FX` | learn what every knob does |
