@@ -195,6 +195,9 @@ def parse_melodic(text: str, beats_per_bar: int, spb: float, t0: float, bars: in
             accent = tok.endswith("^")
             tok = tok.rstrip("^")
             if "/" not in tok:
+                if tok.lower() in ("r", ".", "-", "_"):
+                    raise SongError(f"a rest needs a length too: r/1 is a beat of silence, r/2 two "
+                                    f"(./1 and -/1 work as well)")
                 raise SongError(f"{tok!r} needs a length in beats, like {tok}/1")
             what, length = tok.rsplit("/", 1)
             try:
@@ -202,7 +205,7 @@ def parse_melodic(text: str, beats_per_bar: int, spb: float, t0: float, bars: in
             except ValueError:
                 raise SongError(f"{tok!r}: the length after / is a number of beats")
             start = t0 + (bi * beats_per_bar + beat) * spb
-            if what.lower() != "r":
+            if what.lower() not in ("r", ".", "-", "_"):     # a rest: r/1 (or ./1, -/1)
                 if what.startswith("["):
                     mids = [note_midi(x) for x in what.strip("[]").split()] if " " in what else \
                         [note_midi(x) for x in what.strip("[]").split(",")]

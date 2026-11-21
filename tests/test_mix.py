@@ -186,3 +186,17 @@ def test_note_values_written_where_beats_go_get_a_hint():
     with pytest.raises(SongError) as e:
         parse(s)
     assert "note value" not in str(e.value)
+
+
+@pytest.mark.parametrize("rest", ["r/1", "./1", "-/1"])
+def test_rests_written_any_of_the_usual_ways(rest):
+    from orphic.song import parse
+    tracks, _, _ = parse({"tempo": 120, "instruments": {"k": {"gm": 1}},
+                          "sections": {"a": {"bars": 1, "k": f"{rest} A4/1 G4/2"}}})
+    assert [round(e.start, 2) for e in tracks["k"].events] == [0.5, 1.0]
+
+
+def test_a_rest_without_a_length_says_how():
+    from orphic.song import SongError, parse
+    with pytest.raises(SongError, match="r/1 is a beat of silence"):
+        parse({"tempo": 120, "instruments": {"k": {"gm": 1}}, "sections": {"a": {"bars": 1, "k": ". A4/1 G4/2"}}})
