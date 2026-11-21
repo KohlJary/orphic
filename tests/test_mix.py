@@ -200,3 +200,18 @@ def test_a_rest_without_a_length_says_how():
     from orphic.song import SongError, parse
     with pytest.raises(SongError, match="r/1 is a beat of silence"):
         parse({"tempo": 120, "instruments": {"k": {"gm": 1}}, "sections": {"a": {"bars": 1, "k": ". A4/1 G4/2"}}})
+
+
+def test_a_plugin_that_crashes_when_it_plays_is_a_plain_error(tmp_path, monkeypatch):
+    from orphic import song as S
+    f = tmp_path / "Crashy.vst3"
+    f.write_text("x")
+    monkeypatch.setattr(S, "SAFE_CACHE", tmp_path / "safe.json")
+    monkeypatch.setattr(S, "_PROBE", "import os, signal; os.kill(os.getpid(), signal.SIGSEGV)")
+    with pytest.raises(S.SongError, match="crashes when it plays"):
+        S._plugin_path(str(f))
+    monkeypatch.setattr(S, "_PROBE", "pass")          # remembered: not tried again
+    with pytest.raises(S.SongError, match="crashes when it plays"):
+        S._plugin_path(str(f))
+    f.write_text("xy")                                # a reinstalled plugin is tried afresh
+    assert S._plugin_path(str(f)) == str(f)

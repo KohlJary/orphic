@@ -446,13 +446,59 @@ def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], fl
 
 def _plugin_path(name: str) -> str:
     if os.path.exists(name):
+        _plays_safely(name, name)
         return name
     file = SYNTHS.get(name.lower(), name)
     for d in PLUGIN_DIRS:
         p = Path(d) / file
         if p.exists():
+            _plays_safely(str(p), name)
             return str(p)
     raise SongError(f"no synth {name!r} (known: {', '.join(SYNTHS)})")
+
+
+SAFE_CACHE = Path(os.environ.get("ORPHIC_CACHE", Path.home() / ".cache" / "orphic")) / "plays-safely.json"
+_PROBE = """
+import sys, mido, pedalboard
+p = pedalboard.load_plugin(sys.argv[1])
+p([mido.Message("note_on", note=60, velocity=100, time=0), mido.Message("note_off", note=60, time=0.2)],
+  duration=0.5, sample_rate=44100)
+"""
+
+
+def _plays_safely(path: str, name: str) -> None:
+    """A plugin that crashes when it plays takes the whole render down with it (a segfault, no
+    error to read). So the first time a plugin file is used, it plays one note in a process of
+    its own; a crash there becomes a plain error here. Kept by file, size and date, so a
+    reinstalled plugin is tried afresh."""
+    import subprocess
+    import sys
+    try:
+        st = os.stat(path)
+    except OSError:
+        return
+    key = f"{path}|{st.st_size}|{int(st.st_mtime)}"
+    try:
+        known = json.loads(SAFE_CACHE.read_text())
+    except (OSError, ValueError):
+        known = {}
+    if key not in known:
+        try:
+            r = subprocess.run([sys.executable, "-c", _PROBE, path], capture_output=True, timeout=120)
+            known[key] = r.returncode >= 0           # a negative code is a signal: it crashed
+        except subprocess.TimeoutExpired:
+            known[key] = False
+        try:
+            SAFE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = SAFE_CACHE.with_suffix(f".{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(known))
+            tmp.replace(SAFE_CACHE)
+        except OSError:
+            pass
+    if not known[key]:
+        ok = [n for n in SYNTHS if n != name.lower()]
+        raise SongError(f"{name} crashes when it plays on this machine ({path}), so the studio won't load it; "
+                        f"try {', '.join(ok)}. (Kohl can look at the plugin itself.)")
 
 
 PARAM_CACHE = Path(os.environ.get("ORPHIC_CACHE", Path.home() / ".cache" / "orphic")) / "param-values.json"
