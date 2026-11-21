@@ -175,3 +175,14 @@ def test_a_badly_written_song_is_a_plain_song_error_never_a_python_one(path, val
     d[ks[-1]] = val
     with pytest.raises(SongError):
         parse(s)
+
+
+def test_note_values_written_where_beats_go_get_a_hint():
+    from orphic.song import SongError, parse
+    s = {"tempo": 120, "instruments": {"keys": {"gm": 1}}, "sections": {"a": {"bars": 1, "keys": "A4/4 G4/4 A4/2"}}}
+    with pytest.raises(SongError, match=r"A4/1 G4/1 A4/2"):
+        parse(s)
+    s["sections"]["a"]["keys"] = "A4/3 G4/3"            # just too long: no hint
+    with pytest.raises(SongError) as e:
+        parse(s)
+    assert "note value" not in str(e.value)

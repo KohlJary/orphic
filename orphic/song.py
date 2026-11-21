@@ -214,7 +214,15 @@ def parse_melodic(text: str, beats_per_bar: int, spb: float, t0: float, bars: in
                     out.append(Event(start, L * spb * 0.98, mm, 120 if accent else 96, pm))
             beat += L
         if beat > beats_per_bar + 1e-6:
-            raise SongError(f"bar {bi + 1} '{bt}' has {beat:g} beats, more than {beats_per_bar}")
+            lens = [float(x) for x in re.findall(r"/(\d+(?:\.\d+)?)", bt)]
+            as_values = sum(4.0 / x for x in lens if x > 0)
+            hint = ""
+            if lens and all(x in (1, 2, 4, 8, 16, 32) for x in lens) and abs(as_values - beats_per_bar) < 1e-6:
+                hint = (" The number after / is the note's length in beats (/1 is one beat, /4 is four), "
+                        "not a note value; read as note values, the bar would fit, so maybe "
+                        + " ".join(re.sub(r"/(\d+)", lambda m: f"/{4 / float(m.group(1)):g}", t) for t in bt.split())
+                        + "?")
+            raise SongError(f"bar {bi + 1} '{bt}' has {beat:g} beats, more than {beats_per_bar}.{hint}")
     return out
 
 
