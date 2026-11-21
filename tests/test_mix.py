@@ -112,3 +112,21 @@ def test_attacks_off_each_other_arent():
     r = heard({"vocal": clicks([0.25 + 0.5 * i for i in range(7)], seed=1),
                "hats": clicks([0.5 + 0.5 * i for i in range(7)], seed=2)})
     assert not any("attacks land together" in f for f in r["findings"])
+
+
+# --- instruments written as a list (Cass's first try, 2026-11-21) ---------------------------
+
+def test_instruments_as_a_list_with_names_play_and_lead_true_names_the_lead():
+    from orphic.song import parse
+    s = {"tempo": 120, "instruments": [{"name": "melody", "gm": 1, "lead": True}, {"name": "bass", "gm": 34}],
+         "sections": {"a": {"bars": 1, "melody": "C4/4", "bass": "C2/4"}}}
+    tracks, _, _ = parse(s)
+    assert set(tracks) == {"melody", "bass"} and s["lead"] == "melody"
+
+
+@pytest.mark.parametrize("ins,says", [([{"gm": 1}], "needs a name"), ("piano", "written by name"),
+                                      ([{"name": "a", "gm": 1}, {"name": "a", "gm": 2}], "two instruments")])
+def test_badly_written_instruments_say_how_to_write_them(ins, says):
+    from orphic.song import SongError, parse
+    with pytest.raises(SongError, match=says):
+        parse({"tempo": 120, "instruments": ins, "sections": {}})

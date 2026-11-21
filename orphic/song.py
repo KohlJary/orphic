@@ -280,8 +280,40 @@ def _clip_events(content, base: Optional[Path], meter: int, spb: float, t0: floa
     return out
 
 
+def normalise(song: Dict) -> Dict:
+    """Instruments by name, written either way: a mapping (melody: {synth: ...}) or a list of
+    entries each with a name (- name: melody). An instrument saying lead: true names the lead."""
+    if not isinstance(song, dict):
+        raise SongError("a song is a set of keys: title, tempo, instruments, sections, arrangement")
+    ins = song.get("instruments") or {}
+    if isinstance(ins, list):
+        out = {}
+        for i, e in enumerate(ins):
+            if not isinstance(e, dict) or not e.get("name"):
+                raise SongError(f"instrument {i + 1} in the list needs a name (- name: melody, then its synth "
+                                "or gm or kit); or write instruments by name: melody: {synth: ...}")
+            e = dict(e)
+            name = str(e.pop("name"))
+            if name in out:
+                raise SongError(f"two instruments are called {name!r}")
+            out[name] = e
+        ins = out
+    elif not isinstance(ins, dict):
+        raise SongError("instruments are written by name (melody: {synth: vitalium}) or as a list (- name: melody)")
+    fixed = {}
+    for n, spec in ins.items():
+        spec = dict(spec or {})
+        if "lead" in spec:
+            if spec.pop("lead") and not song.get("lead"):
+                song["lead"] = n
+        fixed[n] = spec
+    song["instruments"] = fixed
+    return song
+
+
 def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], float, List[Tuple[str, float]]]:
     MISSING_CLIPS.clear()
+    normalise(song)
     try:
         tempo = float(song["tempo"])
     except (KeyError, TypeError, ValueError):
@@ -808,7 +840,7 @@ def _rooms(song: Dict) -> List:
 def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print, base: Optional[Path] = None) -> Dict:
     from . import spaces
     from . import mix as mix_ears
-    song = yaml.safe_load(Path(song_path).read_text())
+    song = normalise(yaml.safe_load(Path(song_path).read_text()))
     tracks, length, marks = parse(song, Path(base or Path(song_path).parent))
     try:
         rings = [spaces.ring_s(r) for r in _rooms(song)]

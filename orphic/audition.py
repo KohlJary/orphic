@@ -42,7 +42,8 @@ def window(song: Dict, section: str, time: int = 1, repeat: int = 1,
         raise SongError("repeat goes from 1 to 8")
     i = where[time - 1]
     trying = copy.deepcopy(sections[section])
-    instruments = song.get("instruments") or {}
+    from .song import normalise
+    instruments = normalise(song).get("instruments") or {}
     for part, content in (swap or {}).items():
         if part in ("bars", "hold"):
             trying[part] = content
