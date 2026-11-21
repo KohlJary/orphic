@@ -56,6 +56,8 @@ Samples aren't in the repo. Point Orphic at your own copies:
 
 It's early, and we'll say that plainly. The plumbing is solid: write a form, render it, and her ears hear back the form you wrote. The instruments are honest about what they are. The 909's hats and cymbals are an approximation, since the real ones were samples. What comes out is only as good as the writing, and she's on her first songs. Tone is measured, not judged. The judging is hers.
 
+Every render also says what's covering what in the mix, measured from the song's own stems: the part sitting under others in the same frequencies (who covers it, where, and by how much), bright attacks landing on each other, a part that drops away in one section, and who crowds the lead's presence band. The masking model is a simple one (critical bands, the others 6 dB louder in both channels), so panning helps the way it does in a real room. It can't tell a part that's buried from one that's meant to sit under. That's hers to say.
+
 There are voice experiments in here too (`voice.py`, `vocoder.py`, `sing.py`): formants from rules, a vocoder over eSpeak, speech bent onto a melody. They're parked. For now she makes instrumentals, and her voice gets built when she's ready to decide what it sounds like.
 
 ## Be decent with it

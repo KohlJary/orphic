@@ -66,6 +66,14 @@ section before the 3rd chorus, the chorus twice, and the first bars of what foll
 rendering the song; `--swap '{"bass": "E2/2 G2/2 | ..."}'` tries different notes for a part
 (or a different hold) just this once. Nothing is written to the song.
 
+Hearing the mix: every render and audition says what's covering what (`the_mix`), measured
+from the song's own stems: a part sitting under others in the same frequencies (who covers
+it, where, and how much louder they are), bright attacks landing on each other, a part
+that drops away in one section, and who crowds the lead's presence band (2 to 5 kHz).
+`lead: melody` at the top of the song names the lead; otherwise a part called vocal, lead
+or melody is taken as it. It can't tell a part that's buried from one meant to sit under:
+that's yours to say.
+
 Rendering is deterministic: the same file gives the same audio.
 """
 from __future__ import annotations
@@ -799,6 +807,7 @@ def _rooms(song: Dict) -> List:
 
 def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print, base: Optional[Path] = None) -> Dict:
     from . import spaces
+    from . import mix as mix_ears
     song = yaml.safe_load(Path(song_path).read_text())
     tracks, length, marks = parse(song, Path(base or Path(song_path).parent))
     try:
@@ -812,6 +821,7 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print, base: O
     mix = np.zeros((2, int(total * SR)))
     info = {}
     stems_mono = {}
+    heard = {}
     for name, tr in tracks.items():
         if tr.spec.get("kit"):
             a = render_kit(tr, total)
@@ -827,6 +837,7 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print, base: O
         a = _pan(a * float(tr.spec.get("gain", 0.8)), tr.spec.get("pan", 0.0))
         sf.write(out_dir / "stems" / f"{name}.wav", a.T, SR, subtype="PCM_24")
         stems_mono[name] = a.mean(axis=0)
+        heard[name] = mix_ears.bands(a)
         mix += a
         mono = a.mean(axis=0)
         sounding = mono[np.abs(mono) > 1e-4]
@@ -863,6 +874,7 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print, base: O
             r["vs_loudest_db"] = round(r["loudness_db"] - top_s, 1)
     result = {"title": song.get("title", Path(song_path).stem), "tempo": song["tempo"], "length_s": round(length, 2),
               "balance": balance, "by_section": table,
+              "the_mix": mix_ears.hear(heard, marks, length, song.get("lead")),
               **({"clips_not_written_yet": list(MISSING_CLIPS)} if MISSING_CLIPS else {}),
               "sections": marks, "tracks": info, "mix_peak_before_normalising_db": round(float(20 * np.log10(peak + 1e-12)), 1),
               "would_have_clipped": clipped}
