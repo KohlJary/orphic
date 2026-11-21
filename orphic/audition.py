@@ -22,6 +22,9 @@ from .song import SR, SongError, render
 NEXT_BARS = 2   # how much of the next section to keep: enough to hear the landing
 
 
+SOURCES = {"synth", "gm", "sfz", "kit", "samples"}
+
+
 def window(song: Dict, section: str, time: int = 1, repeat: int = 1,
            swap: Optional[Dict] = None) -> Tuple[Dict, Optional[str]]:
     """The audition as a song of its own: before, the section (repeated), after; and the
@@ -46,15 +49,33 @@ def window(song: Dict, section: str, time: int = 1, repeat: int = 1,
     trying = copy.deepcopy(sections[section])
     from .song import normalise
     instruments = normalise(song).get("instruments") or {}
+    sound = {}
     for part, content in (swap or {}).items():
         if part in ("bars", "hold"):
             trying[part] = content
+            continue
+        if part == "instruments":
+            if not isinstance(content, dict):
+                raise SongError("swap instruments is parts by name with what to change, like "
+                                "{\"instruments\": {\"pad\": {\"gain\": 0.4}}}")
+            for n, change in content.items():
+                if n not in instruments:
+                    raise SongError(f"swap instruments names {n!r}, which isn't an instrument ({', '.join(instruments)})")
+                if not isinstance(change, dict):
+                    raise SongError(f"swap instruments {n!r} is what to change, like {{\"gain\": 0.4}}")
+                sound[n] = change
             continue
         if part not in instruments:
             raise SongError(f"swap names {part!r}, which isn't an instrument ({', '.join(instruments)})")
         trying[part] = content
     label = f"{section} (trying)" if swap else section
     out = copy.deepcopy(song)
+    for n, change in sound.items():           # how a part sounds: for the whole audition, before and after too
+        spec = dict(out["instruments"][n] or {})
+        if SOURCES & set(change):              # a new source replaces the old one
+            spec = {k: v for k, v in spec.items() if k not in SOURCES | {"patch", "params"}}
+        spec.update(change)
+        out["instruments"][n] = spec
     out["sections"] = dict(sections)
     out["sections"][label] = trying
     arr = ([arrangement[i - 1]] if i > 0 else []) + [label] * repeat

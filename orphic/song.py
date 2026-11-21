@@ -64,7 +64,9 @@ arrives when you've decided it should.
 Hearing a change in place: `orphic audition song.yaml chorus --time 3 --repeat 2` plays the
 section before the 3rd chorus, the chorus twice, and the first bars of what follows, without
 rendering the song; `--swap '{"bass": "E2/2 G2/2 | ..."}'` tries different notes for a part
-(or a different hold) just this once. Nothing is written to the song.
+(or a different hold) just this once, and `--swap '{"instruments": {"pad": {"gain": 0.4}}}'`
+tries how a part sounds (its gain, pan, synth, space) for the whole audition. Nothing is
+written to the song.
 
 Hearing the mix: every render and audition says what's covering what (`the_mix`), measured
 from the song's own stems: a part sitting under others in the same frequencies (who covers

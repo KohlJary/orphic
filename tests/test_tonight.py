@@ -199,3 +199,14 @@ def test_her_space_fills_what_she_leaves_out_from_room_and_says_so(tmp_path, mon
     saved = spaces.save_space("attic", "under the roof", {"size": 0.4})
     assert saved["size"] == 0.4 and saved["damping"] == spaces.BUILT_IN["room"]["damping"]
     assert "damping" in saved["from_room"] and "size" not in saved["from_room"]
+
+
+def test_audition_swap_can_change_how_a_part_sounds():
+    s = _song()
+    w, _ = window(s, "b", time=1, swap={"instruments": {"keys": {"gain": 0.3}}})
+    assert w["instruments"]["keys"] == {"gm": 1, "gain": 0.3}
+    assert s["instruments"]["keys"] == {"gm": 1}                      # the song is untouched
+    w, _ = window(s, "b", swap={"instruments": {"keys": {"synth": "vitalium"}}})
+    assert w["instruments"]["keys"] == {"synth": "vitalium"}           # a new source replaces gm
+    with pytest.raises(SongError, match="isn't an instrument"):
+        window(s, "b", swap={"instruments": {"tuba": {"gain": 1}}})
