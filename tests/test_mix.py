@@ -130,3 +130,48 @@ def test_badly_written_instruments_say_how_to_write_them(ins, says):
     from orphic.song import SongError, parse
     with pytest.raises(SongError, match=says):
         parse({"tempo": 120, "instruments": ins, "sections": {}})
+
+
+def test_sections_as_a_list_play_in_that_order():
+    from orphic.song import parse
+    s = {"tempo": 120, "instruments": [{"name": "keys", "gm": 1}],
+         "sections": [{"name": "verse", "bars": 1, "keys": "C/4"}, {"name": "chorus", "bars": 1, "keys": "F/4"}]}
+    _, _, marks = parse(s)
+    assert [m[0] for m in marks] == ["verse", "chorus"]
+
+
+@pytest.mark.parametrize("song,says", [
+    ({"sections": [{"bars": 1}]}, "needs a name"),
+    ({"sections": "verse"}, "written by name"),
+    ({"sections": {"verse": "C/4"}}, "set of keys"),
+    ({"sections": {"verse": {"bars": 1}}, "arrangement": "verse"}, "list of section names"),
+])
+def test_badly_written_sections_say_how(song, says):
+    from orphic.song import SongError, parse
+    with pytest.raises(SongError, match=says):
+        parse({"tempo": 120, "instruments": {"keys": {"gm": 1}}, **song})
+
+
+def test_audition_reads_sections_as_a_list():
+    from orphic.audition import window
+    s = {"tempo": 120, "instruments": {"keys": {"gm": 1}},
+         "sections": [{"name": "a", "bars": 1, "keys": "C/4"}, {"name": "b", "bars": 1, "keys": "F/4"}]}
+    w, after = window(s, "a")
+    assert w["arrangement"] == ["a", "b"]
+
+
+@pytest.mark.parametrize("path,val", [
+    ("instruments.keys", "piano"), ("instruments.keys.gm", "one"), ("instruments.keys.fx", "reverb"),
+    ("instruments.keys.gain", "loud"), ("instruments.keys.pan", "left"), ("sections.a.bars", "eight"),
+    ("sections.a.bars", None), ("sections.a.bars", -2), ("arrangement", [["a"]]), ("meter", "four"), ("meter", 0),
+])
+def test_a_badly_written_song_is_a_plain_song_error_never_a_python_one(path, val):
+    from orphic.song import SongError, parse
+    s = {"tempo": 120, "instruments": {"keys": {"gm": 1}}, "sections": {"a": {"bars": 1, "keys": "C/4"}},
+         "arrangement": ["a"]}
+    d, ks = s, path.split(".")
+    for k in ks[:-1]:
+        d = d[k]
+    d[ks[-1]] = val
+    with pytest.raises(SongError):
+        parse(s)

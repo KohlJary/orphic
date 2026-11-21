@@ -26,6 +26,8 @@ def window(song: Dict, section: str, time: int = 1, repeat: int = 1,
            swap: Optional[Dict] = None) -> Tuple[Dict, Optional[str]]:
     """The audition as a song of its own: before, the section (repeated), after; and the
     name of the section after, if there is one."""
+    from .song import normalise
+    normalise(song)
     sections = song.get("sections") or {}
     arrangement = list(song.get("arrangement") or sections)
     if section not in sections:

@@ -302,12 +302,41 @@ def normalise(song: Dict) -> Dict:
         raise SongError("instruments are written by name (melody: {synth: vitalium}) or as a list (- name: melody)")
     fixed = {}
     for n, spec in ins.items():
+        if spec is not None and not isinstance(spec, dict):
+            raise SongError(f"instrument {n!r} is a set of keys, like {n}: {{synth: vitalium}} or {n}: {{gm: 1}}")
         spec = dict(spec or {})
         if "lead" in spec:
             if spec.pop("lead") and not song.get("lead"):
                 song["lead"] = n
         fixed[n] = spec
     song["instruments"] = fixed
+    secs = song.get("sections") or {}
+    if isinstance(secs, list):
+        out = {}
+        for i, e in enumerate(secs):
+            if not isinstance(e, dict) or not e.get("name"):
+                raise SongError(f"section {i + 1} in the list needs a name (- name: verse, bars: 8, then the parts); "
+                                "or write sections by name: verse: {bars: 8, ...}")
+            e = dict(e)
+            name = str(e.pop("name"))
+            if name in out:
+                raise SongError(f"two sections are called {name!r}; to play one again, list it twice in arrangement")
+            out[name] = e
+        song["sections"] = out
+        song.setdefault("arrangement", list(out))   # written as a list, it plays in that order
+    elif not isinstance(secs, dict):
+        raise SongError("sections are written by name (verse: {bars: 8, ...}) or as a list (- name: verse)")
+    for n, sec in (song.get("sections") or {}).items():
+        if not isinstance(sec, dict):
+            raise SongError(f"section {n!r} is a set of keys: bars, and each part's notes")
+    arr = song.get("arrangement")
+    if arr is not None and (not isinstance(arr, list) or not all(isinstance(x, str) for x in arr)):
+        raise SongError("arrangement is a list of section names, in the order they play: [intro, verse, chorus]")
+    try:
+        if int(song.get("meter", 4)) < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise SongError("meter is beats in a bar, a number: meter: 4")
     return song
 
 
@@ -332,6 +361,16 @@ def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], fl
                             f"an instrument takes {', '.join(sorted(INSTRUMENT_KEYS - {'volume'}))}")
         if "volume" in spec and "gain" not in spec:
             spec["gain"] = spec.pop("volume")   # volume reads as gain
+        for k, like in (("gain", "gain: 0.8"), ("pan", "pan: -0.3 (left) to 0.3 (right)"), ("gm", "gm: 1")):
+            if k in spec:
+                try:
+                    float(spec[k])
+                except (TypeError, ValueError):
+                    raise SongError(f"{k} on {n!r} is a number, like {like}")
+        fx = spec.get("fx")
+        if fx is not None and not (isinstance(fx, list) and all(isinstance(e, dict) for e in fx)):
+            raise SongError(f"fx on {n!r} is a list of effects, each with its settings, like "
+                            "fx: [{builtin: reverb, room_size: 0.4}] or [{plugin: swankyamp, params: {...}}]")
         tracks[n] = Track(n, spec)
     t = 0.0
     marks = []
@@ -339,7 +378,12 @@ def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], fl
         sec = sections.get(name)
         if sec is None:
             raise SongError(f"the arrangement names {name!r}, but there's no such section")
-        bars = int(sec.get("bars", 1))
+        try:
+            bars = int(sec.get("bars", 1))
+        except (TypeError, ValueError):
+            raise SongError(f"bars in section {name!r} is a number, like bars: 8")
+        if bars < 1:
+            raise SongError(f"section {name!r} needs at least 1 bar")
         try:
             hold = float(sec.get("hold") or 0)
         except (TypeError, ValueError):
