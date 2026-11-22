@@ -95,7 +95,7 @@ import yaml
 
 SR = 44100
 PLUGIN_DIRS = ["/usr/lib/vst3", "/usr/local/lib/vst3", str(Path.home() / ".vst3")]
-SYNTHS = {"vitalium": "vitalium.vst3", "nekobi": "Nekobi.vst3", "surge": "Surge.vst3", "sfizz": "sfizz.vst3",
+SYNTHS = {"vitalium": "vitalium.vst3", "nekobi": "Nekobi.vst3", "surge": "Surge XT.vst3", "sfizz": "sfizz.vst3",
           "kars": "Kars.vst3"}
 EFFECTS = {"swankyamp": "SwankyAmp.vst3", "zamtube": "ZamTube.vst3"}
 BUILTIN_FX = ("distortion", "compressor", "reverb", "chorus", "delay", "gain", "highpass", "lowpass", "noisegate",
