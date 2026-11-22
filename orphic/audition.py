@@ -95,14 +95,18 @@ def audition(song_path: Path, out_dir: Path, section: str, time: int = 1, repeat
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "audition.yaml").write_text(yaml.safe_dump(w, sort_keys=False))
-    res = render(out_dir / "audition.yaml", out_dir, tail=2.0, log=log, base=song_path.parent)
-    marks = res["sections"]
+    cut = None
     if after:
         # keep the landing: the first bars of the next section, and let them ring out a little
+        from .song import normalise, parse
+        _, _, marks = parse(normalise(copy.deepcopy(w)), song_path.parent)
         meter = int(song.get("meter", 4))
         bar = meter * 60.0 / float(song["tempo"])
         bars_next = int((song["sections"][after] or {}).get("bars", 1))
         cut = marks[-1][1] + min(NEXT_BARS, bars_next) * bar
+    # the_mix hears what she hears: the crop, not the whole of the next section
+    res = render(out_dir / "audition.yaml", out_dir, tail=2.0, log=log, base=song_path.parent, hear_until=cut)
+    if after:
         y, sr = sf.read(out_dir / "render.wav", always_2d=True)
         end = min(len(y), int((cut + 1.0) * SR))
         y = y[:end]

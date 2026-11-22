@@ -210,3 +210,18 @@ def test_audition_swap_can_change_how_a_part_sounds():
     assert w["instruments"]["keys"] == {"synth": "vitalium"}           # a new source replaces gm
     with pytest.raises(SongError, match="isn't an instrument"):
         window(s, "b", swap={"instruments": {"tuba": {"gain": 1}}})
+
+
+def test_audition_mix_hears_only_the_crop(tmp_path, monkeypatch):
+    """the_mix covers what the audition plays: not the rest of the next section after the cut."""
+    monkeypatch.setenv("ORPHIC_BELT", str(tmp_path / "belt"))
+    from orphic.audition import audition
+    s = _song()
+    s["instruments"]["pad"] = {"gm": 89}
+    s["sections"]["c"] = {"bars": 4, "keys": "F/4 | G/4 | F/4 | G/4", "pad": "r/4 | r/4 | F/4 | G/4"}
+    p = tmp_path / "song.yaml"
+    p.write_text(yaml.safe_dump(s))
+    res = audition(p, tmp_path / "out", "b", time=2, log=lambda *_: None)   # window: a, b, c; c cut after 2 bars
+    assert res["window"] == ["a", "b", "c"]
+    assert "pad" not in res["the_mix"]["covered"]                # the pad comes in after the cut
+    assert "keys" in res["the_mix"]["covered"]

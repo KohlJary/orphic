@@ -940,7 +940,9 @@ def _rooms(song: Dict) -> List:
     return out + [spec["space"] for spec in (song.get("instruments") or {}).values() if (spec or {}).get("space")]
 
 
-def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print, base: Optional[Path] = None) -> Dict:
+def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print, base: Optional[Path] = None,
+           hear_until: Optional[float] = None) -> Dict:
+    """hear_until: seconds; the_mix hears only up to there (an audition plays a crop of its window)."""
     from . import spaces
     from . import mix as mix_ears
     song = normalise(yaml.safe_load(Path(song_path).read_text()))
@@ -1009,12 +1011,21 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print, base: O
             r["vs_loudest_db"] = round(r["loudness_db"] - top_s, 1)
     result = {"title": song.get("title", Path(song_path).stem), "tempo": song["tempo"], "length_s": round(length, 2),
               "balance": balance, "by_section": table,
-              "the_mix": mix_ears.hear(heard, marks, length, song.get("lead")),
+              "the_mix": mix_ears.hear(*_heard_until(heard, marks, length, hear_until), song.get("lead")),
               **({"clips_not_written_yet": list(MISSING_CLIPS)} if MISSING_CLIPS else {}),
               "sections": marks, "tracks": info, "mix_peak_before_normalising_db": round(float(20 * np.log10(peak + 1e-12)), 1),
               "would_have_clipped": clipped}
     (out_dir / "render.json").write_text(json.dumps(result, indent=1))
     return result
+
+
+def _heard_until(heard, marks, length, until):
+    """The stems' bands, sections and length cut at `until` seconds (None: all of it)."""
+    if until is None or until >= length:
+        return heard, marks, length
+    from . import mix as mix_ears
+    nf = max(1, (int(until * SR) - mix_ears.N_FFT) // mix_ears.HOP + 1)   # frames that end by `until`
+    return ({k: v[:, :nf] for k, v in heard.items()}, [m for m in marks if m[1] < until], until)
 
 
 def save_patch(name: str, synth: str, params: Dict, notes: str = "") -> Path:
