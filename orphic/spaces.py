@@ -15,7 +15,9 @@ What a space is made of:
 
 The reverb underneath (Freeverb, through pedalboard) can't make a room that rings much under
 half a second; a closet sounds close because you hear little of it, not because it's short.
-Reaper sessions don't carry spaces yet: a session plays the parts dry.
+Reaper sessions carry spaces: a live track plays its room in Orphic's space JSFX (the same
+reverb, walls and tone), a printed one has its room in the audio, and the song's own space
+sits on the master.
 
 `ring_s` is measured, not set: an impulse goes through the room and we time how long it
 takes the ring to fall 60 dB. It's what the numbers actually did.

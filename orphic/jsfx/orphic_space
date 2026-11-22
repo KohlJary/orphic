@@ -1,0 +1,70 @@
+desc:Orphic space (a room: pedalboard Reverb as JUCE does it, walls, tone; Orphic's spaces.apply)
+slider1:size=0.35<0,1,0.01>size
+slider2:damping=0.55<0,1,0.01>damping
+slider3:walls_ms=8<0,500,1>walls_ms
+slider4:amount=0.2<0,1,0.01>amount
+slider5:tone_hz=9000<500,20000,1>tone_hz
+slider6:width=0.7<0,1,0.01>width
+@init
+// JUCE's Reverb (Freeverb): 8 combs and 4 allpasses a side, the right side 23 samples longer
+k = srate / 44100;
+ct = 1000; ct[0]=1116; ct[1]=1188; ct[2]=1277; ct[3]=1356; ct[4]=1422; ct[5]=1491; ct[6]=1557; ct[7]=1617;
+at = 1010; at[0]=556; at[1]=441; at[2]=341; at[3]=225;
+lens = 1200; base = 1300; lasts = 1400; idx = 1500;   // 16 combs then 8 allpasses: lengths, starts, positions
+mem = 2000;
+i = 0;
+loop(8,
+  lens[i] = floor(ct[i] * k); base[i] = mem; mem += lens[i] + 1;
+  lens[i+8] = floor((ct[i] + 23) * k); base[i+8] = mem; mem += lens[i+8] + 1;
+  i += 1;
+);
+i = 0;
+loop(4,
+  lens[16+i] = floor(at[i] * k); base[16+i] = mem; mem += lens[16+i] + 1;
+  lens[20+i] = floor((at[i] + 23) * k); base[20+i] = mem; mem += lens[20+i] + 1;
+  i += 1;
+);
+i = 0; loop(24, idx[i] = 0; i < 16 ? lasts[i] = 0; i += 1;);
+pre = mem; prelen = floor(srate * 0.5) + 2; mem += prelen * 2; prepos = 0;
+memset(base[0], 0, mem - base[0]);
+lp0 = 0; lp1 = 0;
+@slider
+fb = size * 0.28 + 0.7;
+damp = damping * 0.4;
+wet1 = 0.5 * 3 * (1 + width); wet2 = 0.5 * 3 * (1 - width);   // wet_level 1, JUCE's wet scale 3; dry 0
+n = floor(srate * walls_ms / 1000);
+w = tan($pi * min(tone_hz, srate * 0.49) / srate);   // one-pole low-pass (pedalboard LowpassFilter)
+lpb = w / (1 + w); lpa = (w - 1) / (w + 1);
+@sample
+// the walls: the room hears the sound walls_ms late
+pre[prepos*2] = spl0; pre[prepos*2+1] = spl1;
+r = prepos - n; r < 0 ? r += prelen;
+in0 = pre[r*2]; in1 = pre[r*2+1];
+prepos += 1; prepos >= prelen ? prepos = 0;
+input = (in0 + in1) * 0.015;
+oL = 0; oR = 0;
+i = 0;
+loop(16,
+  b = base[i] + idx[i];
+  o = b[0];
+  lasts[i] = o * (1 - damp) + lasts[i] * damp;
+  b[0] = input + lasts[i] * fb;
+  idx[i] += 1; idx[i] >= lens[i] ? idx[i] = 0;
+  i < 8 ? oL += o : oR += o;
+  i += 1;
+);
+i = 16;
+loop(8,
+  b = base[i] + idx[i];
+  v = b[0];
+  x = i < 20 ? oL : oR;
+  b[0] = x + v * 0.5;
+  idx[i] += 1; idx[i] >= lens[i] ? idx[i] = 0;
+  i < 20 ? oL = v - x : oR = v - x;
+  i += 1;
+);
+wL = oL * wet1 + oR * wet2; wR = oR * wet1 + oL * wet2;
+// tone: y = b*(x + x1) - a*y1
+y0 = lpb * (wL + lx0) - lpa * lp0; lx0 = wL; lp0 = y0;
+y1 = lpb * (wR + lx1) - lpa * lp1; lx1 = wR; lp1 = y1;
+spl0 += amount * y0; spl1 += amount * y1;

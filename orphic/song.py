@@ -557,9 +557,10 @@ def _quick_load():
 def _set_params(plugin, params: Dict, path: str = ""):
     """Set a synth's knobs by name. Only the knobs named are looked at: pedalboard's own
     lookup builds every parameter first (each one searched over 1000 steps), which took a
-    synth like Vitalium about 15 seconds before a note played."""
+    synth like Vitalium about 15 seconds before a note played. Returns the raw 0-1 value set
+    for each knob (what Reaper takes)."""
     if not params:
-        return
+        return {}
     try:
         from pedalboard._pedalboard import AudioProcessorParameter, to_python_parameter_name
         names = {}
@@ -582,7 +583,7 @@ def _set_params(plugin, params: Dict, path: str = ""):
                     cache[key] = float(v)
                 _param_cache_save(cache)
             cpp[names[k]].raw_value = cache[key]
-        return
+        return {k: float(cpp[names[k]].raw_value) for k in params}
     for k, v in (params or {}).items():
         if k not in plugin.parameters:
             import difflib
@@ -595,6 +596,7 @@ def _set_params(plugin, params: Dict, path: str = ""):
             setattr(plugin, k, v)
         except Exception:
             plugin.parameters[k].raw_value = float(v)
+    return {k: float(plugin.parameters[k].raw_value) for k in params}
 
 
 def render_synth(tr: Track, total: float) -> np.ndarray:

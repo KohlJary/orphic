@@ -167,8 +167,8 @@ def _normalized(plugin_path: str, params: Dict) -> Dict[str, float]:
     from .song import _quick_load, _set_params
     _quick_load()
     p = load_plugin(plugin_path)
-    _set_params(p, params, plugin_path)
-    return {k: float(p.parameters[k].raw_value) for k in (params or {})}, p.name
+    # the raw values _set_params set: reading p.parameters builds every knob (Nekobi's 2090: ten seconds)
+    return _set_params(p, params, plugin_path), p.name
 
 
 def _live_chain(chain) -> List[Dict]:
@@ -194,13 +194,30 @@ def _live_chain(chain) -> List[Dict]:
     return out
 
 
+SPACE_SLIDERS = ["size", "damping", "walls_ms", "amount", "tone_hz", "width"]
+
+
+def space_fx(spec) -> Dict:
+    """A space as Reaper plays it: Orphic's space JSFX (the same room as spaces.apply)."""
+    from . import spaces
+    sp = spaces.get(spec)
+    return {"name": "JS:orphic/orphic_space", "values": [float(sp[k]) for k in SPACE_SLIDERS]}
+
+
 def build(song_path: Path, out_dir: Path, log=print, timeout: float = 300) -> Dict:
     from .song import (BELT, BUILTIN_FX, EFFECTS, PLUGIN_DIRS, SongError, Track, _plugin_path, apply_fx, parse,
-                       render_kit, render_source, resolve_chain)
-    song = yaml.safe_load(Path(song_path).read_text())
+                       render_kit, render_source, resolve_chain, _rooms)
+    from . import spaces
+    from .song import normalise
+    song = normalise(yaml.safe_load(Path(song_path).read_text()))
     tracks, length, marks = parse(song, Path(song_path).parent)
+    try:
+        rooms = {n: space_fx(t.spec["space"]) for n, t in tracks.items() if t.spec.get("space")}
+        master = [space_fx(song["space"])] if song.get("space") else []
+    except spaces.SpaceError as e:
+        raise SongError(str(e))
     tempo, meter = float(song["tempo"]), int(song.get("meter", 4))
-    total = length + 2.0
+    total = length + max([2.0] + [min(spaces.ring_s(r), 8.0) for r in _rooms(song)])   # rooms ring out
     out_dir = Path(out_dir).resolve()
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -226,7 +243,7 @@ def build(song_path: Path, out_dir: Path, log=print, timeout: float = 300) -> Di
         fxs = []
         if livable:
             try:
-                fxs = _live_chain(chain)
+                fxs = _live_chain(chain) + ([rooms[name]] if name in rooms else [])
             except Exception as e:
                 log(f"  {name}: its effects can't all run in Reaper ({e}); printing its audio")
                 livable = False
@@ -265,6 +282,8 @@ def build(song_path: Path, out_dir: Path, log=print, timeout: float = 300) -> Di
             else:
                 a, _ = render_source(tr, total)
             a = apply_fx(a, chain)
+            if spec.get("space"):
+                a = spaces.apply(a, spec["space"])     # printed in its room
             wav = out_dir / "media" / f"{safe}.wav"
             sf.write(wav, a.T, 44100, subtype="PCM_24")
             entry["audio"] = str(wav)
@@ -274,7 +293,7 @@ def build(song_path: Path, out_dir: Path, log=print, timeout: float = 300) -> Di
     done = out_dir / ".done"
     lua = out_dir / ".build.lua"
     lua.write_text(LUA % {
-        "plan": _lua(plan), "tempo": tempo, "meter": meter, "marks": _lua([[m, t] for m, t in marks]),
+        "plan": _lua(plan), "master": _lua(master), "tempo": tempo, "meter": meter, "marks": _lua([[m, t] for m, t in marks]),
         "rpp": _lua_str(str(rpp)), "dir": _lua_str(str(out_dir)), "done": _lua_str(str(done)),
         "log": _lua_str(str(out_dir / "reaper-log.txt"))})
     cfg = _cfg_dir()
@@ -408,6 +427,13 @@ for _, p in ipairs(plan) do
     reaper.SetMediaTrackInfo_Value(lane, "B_MUTE", 1)
     reaper.SetMediaTrackInfo_Value(lane, "I_FOLDERDEPTH", -1)
   end
+end
+-- the song's own space: the whole band in one room, on the master
+local mt = reaper.GetMasterTrack(0)
+for _, e in ipairs(%(master)s) do
+  local f = reaper.TrackFX_AddByName(mt, e.name, false, -1)
+  if f < 0 then note("master: couldn't load " .. e.name)
+  else for i, v in ipairs(e.values) do reaper.TrackFX_SetParam(mt, f, i - 1, v) end end
 end
 for i, m in ipairs(marks) do reaper.AddProjectMarker(0, false, m[2], 0, m[1], i) end
 reaper.GetSetProjectInfo_String(0, "RENDER_FILE", %(dir)s .. "/render", true)
