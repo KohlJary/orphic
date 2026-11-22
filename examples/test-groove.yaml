@@ -2,10 +2,10 @@ title: Test groove
 tempo: 92
 meter: 4
 instruments:
-  drums: {kit: "808", gain: 0.9}
-  bass: {synth: nekobi, gain: 0.7, params: {cutoff: 35, vcf_resonance: 60, env_mod: 50, decay: 40}}
-  pad: {synth: vitalium, gain: 0.35, pan: 0.2}
-  keys: {gm: 5, gain: 0.4, pan: -0.3}
+  drums: {kit: "808", gain: 0.63}
+  bass: {synth: nekobi, gain: 0.5, params: {cutoff: 35, vcf_resonance: 60, env_mod: 50, decay: 40}}
+  pad: {synth: vitalium, gain: 0.25, pan: 0.2}
+  keys: {gm: 5, gain: 0.28, pan: -0.3}
 sections:
   a:
     bars: 4

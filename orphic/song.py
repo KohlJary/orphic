@@ -100,7 +100,7 @@ SYNTHS = {"vitalium": "vitalium.vst3", "nekobi": "Nekobi.vst3", "surge": "Surge 
 EFFECTS = {"swankyamp": "SwankyAmp.vst3", "zamtube": "ZamTube.vst3"}
 BUILTIN_FX = ("distortion", "compressor", "reverb", "chorus", "delay", "gain", "highpass", "lowpass", "noisegate",
               "convolution", "phaser", "bitcrush", "ladderfilter")
-SOUNDFONT = "/usr/share/soundfonts/FluidR3_GM.sf2"
+SOUNDFONT = os.environ.get("ORPHIC_SOUNDFONT", "/usr/share/soundfonts/FluidR3_GM.sf2")
 SFZ_DIR = Path(os.environ.get("ORPHIC_SFZ_DIR", Path.home() / "acousmatic-data" / "guitar"))
 # sampled instruments: name -> folder under SFZ_DIR holding one .sfz (with its license)
 SFZ_LIBS = {"fsbs-direct": "freepats-direct"}
@@ -115,7 +115,7 @@ KIT_DEFAULT = {"kick": "BD/BD2575", "snare": "SD/SD5025", "clap": "CP/CP", "hat"
                "rim": "RS/RS", "cowbell": "CB/CB", "low_tom": "LT/LT50", "mid_tom": "MT/MT50", "high_tom": "HT/HT50",
                "cymbal": "CY/CY5050", "clave": "CL/CL", "maracas": "MA/MA"}
 # acoustic kits: x42 AVLDrums' SoundFonts (Glen MacArthur's AVL Drumkits), General MIDI drum notes
-AVL_DIR = Path("/usr/lib/lv2/avldrums.lv2")
+AVL_DIR = Path(os.environ.get("ORPHIC_AVLDRUMS", "/usr/lib/lv2/avldrums.lv2"))
 ACOUSTIC_KITS = {"black-pearl": "Black_Pearl_4_LV2.sf2", "red-zeppelin": "Red_Zeppelin_4_LV2.sf2",
                  "blonde-bop": "Blonde_Bop_LV2.sf2", "blonde-bop-hr": "Blonde_Bop_HR_LV2.sf2",
                  "buskmans-holiday": "Buskmans_Holiday_LV2.sf2"}
@@ -129,6 +129,8 @@ NOTE_DRUM = {}
 for _v, _n in DRUM_NOTES.items():
     NOTE_DRUM.setdefault(_n, _v)
 MISSING_CLIPS: List[str] = []   # clips a song names that aren't written yet (they play as silence)
+UNPLAYED_BARS: List[str] = []   # parts that write more bars than their section has (the extra bars don't play)
+MAX_TEMPO = 600
 BELT = Path(os.environ.get("ORPHIC_BELT", Path.home() / "orphic" / "belt"))
 
 NOTE = re.compile(r"^([A-Ga-g])([#b]?)(-?\d)$")
@@ -142,16 +144,23 @@ class SongError(ValueError):
     pass
 
 
+def _ascii(tok: str) -> str:
+    return tok.replace("\u266d", "b").replace("\u266f", "#")   # E\u266d4 reads as Eb4
+
+
 def note_midi(tok: str) -> int:
-    m = NOTE.match(tok)
+    m = NOTE.match(_ascii(tok))
     if not m:
         raise SongError(f"not a note: {tok!r} (like E2, C#4, Bb3)")
     pc = PCS[m.group(1).upper()] + {"#": 1, "b": -1, "": 0}[m.group(2)]
-    return 12 * (int(m.group(3)) + 1) + pc
+    midi = 12 * (int(m.group(3)) + 1) + pc
+    if not 0 <= midi <= 127:
+        raise SongError(f"{tok!r} is outside what MIDI can play (C-1 to G9)")
+    return midi
 
 
 def chord_midis(name: str, octave: int = 3) -> List[int]:
-    m = re.match(r"^([A-G])([#b]?)(.*)$", name)
+    m = re.match(r"^([A-G])([#b]?)(.*)$", _ascii(name))
     if not m or m.group(3) not in QUAL:
         raise SongError(f"not a chord: {name!r} (like Em, C, G7, Bbmaj7, F#m7, Dsus4)")
     root = 12 * (octave + 1) + PCS[m.group(1)] + {"#": 1, "b": -1, "": 0}[m.group(2)]
@@ -187,6 +196,9 @@ def split_bars(text: str) -> List[str]:
 
 def parse_melodic(text: str, beats_per_bar: int, spb: float, t0: float, bars: int) -> List[Event]:
     bar_texts = split_bars(text)
+    if len(bar_texts) > bars:
+        UNPLAYED_BARS.append(f"{len(bar_texts)} bars written where the section has {bars}: "
+                             f"bars {bars + 1}-{len(bar_texts)} don't play ({str(text)[:40]!r})")
     out: List[Event] = []
     for bi in range(bars):
         bt = bar_texts[bi % len(bar_texts)]
@@ -206,6 +218,9 @@ def parse_melodic(text: str, beats_per_bar: int, spb: float, t0: float, bars: in
                 L = float(length)
             except ValueError:
                 raise SongError(f"{tok!r}: the length after / is a number of beats")
+            if not L > 0 or L == float("inf"):
+                raise SongError(f"{tok!r}: a length is more than 0 beats, like {what}/1 or {what}/0.5")
+            what = _ascii(what)
             start = t0 + (bi * beats_per_bar + beat) * spb
             if what.lower() not in ("r", ".", "-", "_"):     # a rest: r/1 (or ./1, -/1)
                 if what.startswith("["):
@@ -355,15 +370,26 @@ def normalise(song: Dict) -> Dict:
 
 def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], float, List[Tuple[str, float]]]:
     MISSING_CLIPS.clear()
+    UNPLAYED_BARS.clear()
     normalise(song)
     try:
         tempo = float(song["tempo"])
     except (KeyError, TypeError, ValueError):
         raise SongError("a song needs a tempo (beats per minute)")
-    meter = int(song.get("meter", 4))
+    if not 0 < tempo <= MAX_TEMPO:
+        raise SongError(f"tempo is beats per minute, more than 0 and at most {MAX_TEMPO} (it's {song['tempo']})")
+    try:
+        meter_f = float(song.get("meter", 4))
+    except (TypeError, ValueError):
+        raise SongError("meter is beats per bar, a whole number like 4 or 3")
+    if meter_f != int(meter_f) or meter_f < 1:
+        raise SongError(f"meter is beats per bar, a whole number like 4 or 3 (it's {song.get('meter')})")
+    meter = int(meter_f)
     spb = 60.0 / tempo
     instruments = song.get("instruments") or {}
     sections = song.get("sections") or {}
+    if not sections:
+        raise SongError("a song needs at least one section, with its bars and parts")
     arrangement = song.get("arrangement") or list(sections)
     tracks = {}
     for n, spec in instruments.items():
@@ -725,7 +751,7 @@ def _sample(rel: str) -> np.ndarray:
     if rel not in _SAMPLES:
         p = KIT_DIR / f"{rel}.WAV"
         if not p.exists():
-            raise SongError(f"no 808 sample {rel!r}")
+            raise SongError(f"no 808 sample {rel!r} under {KIT_DIR} (set $ORPHIC_808 to your 808 set)")
         y, sr = sf.read(p)
         if sr != SR:
             import librosa
@@ -1021,6 +1047,7 @@ def render(song_path: Path, out_dir: Path, tail: float = 2.0, log=print, base: O
               "balance": balance, "by_section": table,
               "the_mix": mix_ears.hear(*_heard_until(heard, marks, length, hear_until), song.get("lead")),
               **({"clips_not_written_yet": list(MISSING_CLIPS)} if MISSING_CLIPS else {}),
+              **({"bars_not_played": list(UNPLAYED_BARS)} if UNPLAYED_BARS else {}),
               "sections": marks, "tracks": info, "mix_peak_before_normalising_db": round(float(20 * np.log10(peak + 1e-12)), 1),
               "would_have_clipped": clipped}
     (out_dir / "render.json").write_text(json.dumps(result, indent=1))

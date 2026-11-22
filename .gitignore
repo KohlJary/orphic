@@ -5,3 +5,5 @@ maps/
 *.wav
 out/
 reaper-cfg/
+renders/
+yabridge-host_*.log

@@ -210,6 +210,13 @@ def main(argv=None):
         import json
         from .song import SongError, render
         out = Path(a.out) if a.out else Path("renders") / Path(a.song).stem
+        if a.listen:   # check before the render, not after it
+            try:
+                import acousmatic.listen  # noqa: F401
+            except ImportError:
+                print(json.dumps({"error": "--listen needs Acousmatic: "
+                                  "pip install git+https://github.com/KohlJary/acousmatic"}))
+                sys.exit(2)
         try:
             res = render(Path(a.song), out, log=log)
         except SongError as e:
