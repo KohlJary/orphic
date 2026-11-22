@@ -7,7 +7,9 @@ import yaml
 
 from orphic import spaces
 from orphic.audition import window
-from orphic.song import SongError, parse
+from orphic.song import KIT_DIR, SongError, parse
+
+needs_808 = pytest.mark.skipif(not KIT_DIR.is_dir(), reason="needs the 808 samples ($ORPHIC_808)")
 
 SONG = {
     "title": "t", "tempo": 120, "meter": 4,
@@ -107,6 +109,7 @@ def test_audition_errors_say_what_to_do(kw, says):
         window(_song(), **kw)
 
 
+@needs_808
 def test_audition_renders_only_the_window(tmp_path, monkeypatch):
     monkeypatch.setenv("ORPHIC_BELT", str(tmp_path / "belt"))
     from orphic.audition import audition
@@ -212,6 +215,7 @@ def test_audition_swap_can_change_how_a_part_sounds():
         window(s, "b", swap={"instruments": {"tuba": {"gain": 1}}})
 
 
+@needs_808
 def test_audition_mix_hears_only_the_crop(tmp_path, monkeypatch):
     """the_mix covers what the audition plays: not the rest of the next section after the cut."""
     monkeypatch.setenv("ORPHIC_BELT", str(tmp_path / "belt"))
@@ -225,3 +229,17 @@ def test_audition_mix_hears_only_the_crop(tmp_path, monkeypatch):
     assert res["window"] == ["a", "b", "c"]
     assert "pad" not in res["the_mix"]["covered"]                # the pad comes in after the cut
     assert "keys" in res["the_mix"]["covered"]
+
+
+@pytest.mark.parametrize("two", [{"gm": 1, "synth": "vitalium"}, {"gm": 1, "sfz": "x"}, {"sfz": "x", "patch": "p"}])
+def test_two_sound_sources_on_one_instrument_say_so(two):
+    s = _song()
+    s["instruments"]["keys"] = two
+    with pytest.raises(SongError, match="has both"):
+        parse(s)
+
+
+def test_a_patch_on_its_synth_is_one_source():
+    s = _song()
+    s["instruments"]["keys"] = {"synth": "vitalium", "patch": "warm"}
+    parse(s)

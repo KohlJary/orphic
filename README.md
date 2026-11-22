@@ -31,7 +31,7 @@ You'll want:
 - [pedalboard](https://github.com/spotify/pedalboard) (installed with the package) and whatever VST3 synths and effects you own
 - [sfizz](https://sfz.tools/sfizz/) (`sfizz_render`) for sampled instruments, and [FluidSynth](https://www.fluidsynth.org/) for General MIDI and the acoustic kits
 - [Acousmatic](https://github.com/KohlJary/acousmatic) for listening back
-- Optional: [Reaper](https://www.reaper.fm/) and Xvfb for sessions; x42 AVLDrums for the acoustic kits
+- Optional: [Reaper](https://www.reaper.fm/) and Xvfb for sessions (`reaper` and `xvfb-run` on PATH; Orphic keeps its own Reaper settings in `reaper-cfg/` beside the checkout, or `$ORPHIC_REAPER_CFG`); x42 AVLDrums for the acoustic kits
 
 Samples aren't in the repo. Point Orphic at your own copies:
 

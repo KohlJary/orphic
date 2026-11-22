@@ -95,7 +95,7 @@ def kit_sfz(spec: Dict, out: Path) -> Path:
 
 def _cfg_dir() -> Path:
     """Orphic's own Reaper settings (never Kohl's): created once, plugin folders set."""
-    d = Path(os.environ.get("ORPHIC_REAPER_CFG", Path.home() / "orphic" / "reaper-cfg"))
+    d = Path(os.environ.get("ORPHIC_REAPER_CFG", HERE.parent / "reaper-cfg"))   # beside the checkout, wherever it is
     ini = d / "reaper.ini"
     if not ini.exists():
         d.mkdir(parents=True, exist_ok=True)

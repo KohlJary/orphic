@@ -380,6 +380,12 @@ def parse(song: Dict, base: Optional[Path] = None) -> Tuple[Dict[str, Track], fl
                     float(spec[k])
                 except (TypeError, ValueError):
                     raise SongError(f"{k} on {n!r} is a number, like {like}")
+        given = [k for k in ("gm", "sfz", "synth") if spec.get(k) not in (None, "")]
+        if spec.get("patch") and "synth" not in given:
+            given.append("patch")
+        if len(given) > 1:   # one would play and the other be ignored without a word
+            raise SongError(f"instrument {n!r} has both {given[0]} and {given[1]}; it plays one sound source, "
+                            f"so keep the one you want and take the other out")
         fx = spec.get("fx")
         if fx is not None and not (isinstance(fx, list) and all(isinstance(e, dict) for e in fx)):
             raise SongError(f"fx on {n!r} is a list of effects, each with its settings, like "
